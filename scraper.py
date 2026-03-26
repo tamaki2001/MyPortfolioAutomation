@@ -104,23 +104,62 @@ def _login(page: Page) -> None:
 
     # --- Step 1: メールログインページに直接アクセス ---
     print("  -> ログインページにアクセス中...")
-    page.goto(MF_LOGIN_URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(3000)
+    page.goto(MF_LOGIN_URL, wait_until="networkidle")
+    page.wait_for_timeout(5000)
 
-    # デバッグ: 現在のURLを出力
+    # デバッグ: 現在のURL・ページ状態を出力
     print(f"  -> 現在のURL: {page.url}")
 
+    # デバッグ: ページのスクリーンショットとHTML構造を保存
+    page.screenshot(path="/tmp/debug_login_page.png")
+    print("  -> デバッグ: ログインページスクリーンショット保存完了")
+
+    # ページ内の全input要素を列挙（デバッグ用）
+    inputs_info = page.evaluate("""() => {
+        const inputs = document.querySelectorAll('input, button, [type="submit"]');
+        return Array.from(inputs).map(el => ({
+            tag: el.tagName,
+            type: el.type || '',
+            name: el.name || '',
+            id: el.id || '',
+            className: el.className || '',
+            placeholder: el.placeholder || '',
+            value: el.value || '',
+            visible: el.offsetParent !== null
+        }));
+    }""")
+    print(f"  -> ページ内のinput/button要素数: {len(inputs_info)}")
+    for info in inputs_info:
+        print(f"     {info}")
+
     # --- Step 2: メールアドレス入力 ---
-    # セレクタ: name="mfid_user[email]" が公知のセレクタ
-    email_input = page.wait_for_selector(
+    # 複数のセレクタを順番に試す
+    email_selectors = [
         'input[name="mfid_user[email]"]',
-        timeout=15000,
-    )
+        'input[type="email"]',
+        'input[type="text"]',
+        'input[autocomplete="email"]',
+        'input[autocomplete="username"]',
+        'input:not([type="hidden"]):not([type="submit"])',
+    ]
+
+    email_input = None
+    for selector in email_selectors:
+        try:
+            email_input = page.wait_for_selector(selector, timeout=5000)
+            if email_input:
+                print(f"  -> メール入力欄を発見: {selector}")
+                break
+        except Exception:
+            print(f"  -> セレクタ不一致: {selector}")
+            continue
+
     if not email_input:
-        # フォールバック: 他のセレクタを試す
-        email_input = page.wait_for_selector(
-            'input[type="email"], input[type="text"]',
-            timeout=10000,
+        page.screenshot(path="/tmp/login_failed_no_email_input.png")
+        raise RuntimeError(
+            f"メールアドレス入力欄が見つかりません。"
+            f"現在のURL: {page.url} / "
+            f"ページ内要素: {inputs_info}"
         )
     email_input.fill(MF_EMAIL)
     print("  -> メールアドレス入力完了")

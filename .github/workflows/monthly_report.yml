@@ -65,12 +65,20 @@ jobs:
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: python main.py
 
+      - name: Collect debug screenshots
+        if: failure()
+        run: |
+          mkdir -p debug-output
+          cp /tmp/debug_*.png debug-output/ 2>/dev/null || true
+          cp /tmp/login_failed*.png debug-output/ 2>/dev/null || true
+          cp archives/screenshots/*.png debug-output/ 2>/dev/null || true
+          ls -la debug-output/ || echo "No debug files found"
+
       - name: Upload artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
-          path: |
-            archives/screenshots/
-            /tmp/login_failed.png
+          path: debug-output/
           retention-days: 7
+          if-no-files-found: warn
