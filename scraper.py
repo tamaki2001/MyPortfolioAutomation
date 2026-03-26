@@ -101,6 +101,11 @@ def scrape_portfolio(
             # ページ全文テキスト取得（レポート生成用）
             asset_text = page.inner_text("body")
 
+            # デバッグ: ページテキストの先頭部分を出力
+            preview = asset_text[:1000].replace("\n", " | ")
+            print(f"  -> ページテキスト先頭: {preview}")
+            print(f"  -> ページテキスト全体長: {len(asset_text)} 文字")
+
             # テキストベースでデータ抽出（DOM解析よりも安定）
             raw_data = _extract_from_text(asset_text)
             raw_data["asset_text"] = asset_text
