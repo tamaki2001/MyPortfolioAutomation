@@ -22,7 +22,9 @@ from playwright.sync_api import sync_playwright, Page
 
 
 # マネーフォワード URL
-MF_LOGIN_URL = "https://moneyforward.com/sign_in"
+# メールログインは id.moneyforward.com/sign_in/email に直接アクセスする
+# （moneyforward.com/sign_in → id.moneyforward.com へのリダイレクトを回避）
+MF_LOGIN_URL = "https://id.moneyforward.com/sign_in/email"
 MF_PORTFOLIO_URL = "https://moneyforward.com/bs/portfolio"
 
 # 環境変数から認証情報を取得
@@ -89,81 +91,92 @@ def _login(page: Page) -> None:
     """
     マネーフォワード ME にログインする。
 
-    マネーフォワードのログインフローは以下の通り:
-      1. サインインページにアクセス
-      2. 「メールアドレスでログイン」を選択
-      3. メールアドレス入力 → 「ログインする」ボタン
-      4. パスワード入力 → 「ログインする」ボタン
+    ログインフロー（id.moneyforward.com）:
+      1. /sign_in/email に直接アクセス（メールログイン画面）
+      2. メールアドレス入力 → submitBtn クリック → 画面遷移
+      3. パスワード入力 → submitBtn クリック → ログイン完了
+    ※ メールとパスワードは別画面で入力する（2段階フォーム）
     """
     if not MF_EMAIL or not MF_PASSWORD:
         raise EnvironmentError(
             "環境変数 MF_EMAIL / MF_PASSWORD が設定されていません。"
         )
 
+    # --- Step 1: メールログインページに直接アクセス ---
+    print("  -> ログインページにアクセス中...")
     page.goto(MF_LOGIN_URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(2000)
-
-    # --- Step 1: 「メールアドレスでログイン」リンクをクリック ---
-    # マネーフォワードはソーシャルログインボタンが並んでおり、
-    # メールログインは別のリンク/ボタンになっていることがある
-    email_login_link = page.query_selector(
-        'a[href*="sign_in/email"], '
-        'a:has-text("メールアドレス"), '
-        'button:has-text("メールアドレス")'
-    )
-    if email_login_link:
-        email_login_link.click()
-        page.wait_for_load_state("domcontentloaded")
-        page.wait_for_timeout(2000)
-
-    # --- Step 2: メールアドレス入力 ---
-    email_input = page.wait_for_selector(
-        'input[type="email"], '
-        'input[name="mfid_user[email]"], '
-        'input[placeholder*="メール"], '
-        'input#mfid_user_email',
-        timeout=10000,
-    )
-    email_input.fill(MF_EMAIL)
-
-    # 「ログインする」または「次へ」ボタン
-    submit_btn = page.query_selector(
-        'button[type="submit"], '
-        'input[type="submit"], '
-        'button:has-text("ログイン"), '
-        'button:has-text("次へ")'
-    )
-    if submit_btn:
-        submit_btn.click()
-    page.wait_for_load_state("domcontentloaded")
-    page.wait_for_timeout(2000)
-
-    # --- Step 3: パスワード入力 ---
-    password_input = page.wait_for_selector(
-        'input[type="password"], '
-        'input[name="mfid_user[password]"], '
-        'input#mfid_user_password',
-        timeout=10000,
-    )
-    password_input.fill(MF_PASSWORD)
-
-    # 「ログインする」ボタン
-    login_btn = page.query_selector(
-        'button[type="submit"], '
-        'input[type="submit"], '
-        'button:has-text("ログイン")'
-    )
-    if login_btn:
-        login_btn.click()
-
-    page.wait_for_load_state("networkidle")
     page.wait_for_timeout(3000)
 
+    # デバッグ: 現在のURLを出力
+    print(f"  -> 現在のURL: {page.url}")
+
+    # --- Step 2: メールアドレス入力 ---
+    # セレクタ: name="mfid_user[email]" が公知のセレクタ
+    email_input = page.wait_for_selector(
+        'input[name="mfid_user[email]"]',
+        timeout=15000,
+    )
+    if not email_input:
+        # フォールバック: 他のセレクタを試す
+        email_input = page.wait_for_selector(
+            'input[type="email"], input[type="text"]',
+            timeout=10000,
+        )
+    email_input.fill(MF_EMAIL)
+    print("  -> メールアドレス入力完了")
+
+    # 「ログインする」ボタン（class="submitBtn"）
+    submit_btn = page.wait_for_selector(
+        '.submitBtn, '
+        'input[type="submit"], '
+        'button[type="submit"]',
+        timeout=10000,
+    )
+    submit_btn.click()
+    print("  -> メールアドレス送信、パスワード画面を待機中...")
+
+    # パスワード画面への遷移を待つ
+    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_timeout(3000)
+
+    # --- Step 3: パスワード入力（別画面） ---
+    password_input = page.wait_for_selector(
+        'input[name="mfid_user[password]"]',
+        timeout=15000,
+    )
+    if not password_input:
+        password_input = page.wait_for_selector(
+            'input[type="password"]',
+            timeout=10000,
+        )
+    password_input.fill(MF_PASSWORD)
+    print("  -> パスワード入力完了")
+
+    # 「ログインする」ボタン
+    login_btn = page.wait_for_selector(
+        '.submitBtn, '
+        'input[type="submit"], '
+        'button[type="submit"]',
+        timeout=10000,
+    )
+    login_btn.click()
+
+    # ログイン完了を待つ（moneyforward.com にリダイレクトされるまで）
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(5000)
+
+    # デバッグ: ログイン後のURL
+    print(f"  -> ログイン後のURL: {page.url}")
+
     # ログイン成功確認
-    if "sign_in" in page.url:
+    # id.moneyforward.com の sign_in ページに留まっている場合は失敗
+    if "sign_in" in page.url and "id.moneyforward.com" in page.url:
+        # スクリーンショットを撮ってデバッグ用に保存
+        page.screenshot(path="/tmp/login_failed.png")
         raise RuntimeError(
-            "マネーフォワードへのログインに失敗しました。"
-            "認証情報を確認してください。"
+            f"マネーフォワードへのログインに失敗しました。"
+            f"現在のURL: {page.url} / "
+            f"認証情報を確認してください。"
         )
     print("  -> マネーフォワード ログイン成功")
 

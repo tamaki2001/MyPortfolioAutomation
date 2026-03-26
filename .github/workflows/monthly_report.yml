@@ -70,5 +70,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
-          path: archives/screenshots/
+          path: |
+            archives/screenshots/
+            /tmp/login_failed.png
           retention-days: 7
