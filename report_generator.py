@@ -12,6 +12,7 @@ Ultra C 要件:
 
 import os
 import json
+from datetime import datetime
 
 import anthropic
 
@@ -47,6 +48,10 @@ def generate_report(
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
+    # --- テンプレートの日付プレースホルダーを現在日付で置換 ---
+    now = datetime.now()
+    template = template.replace("{year}", str(now.year)).replace("{month}", str(now.month))
+
     # --- シミュレーション結果の要約 ---
     sim_summary = _summarize_simulation(sim_result)
 
@@ -60,6 +65,7 @@ def generate_report(
         portfolio_data=portfolio_data,
         sim_summary=sim_summary,
         news_summary=news_summary,
+        report_date=now,
     )
 
     message = client.messages.create(
@@ -112,11 +118,18 @@ def _build_user_prompt(
     portfolio_data: dict,
     sim_summary: str,
     news_summary: str,
+    report_date: "datetime | None" = None,
 ) -> str:
     """Claude API の user プロンプトを構築する。"""
     holdings_text = _format_holdings(portfolio_data)
 
-    return f"""以下のデータに基づき、テンプレートに従って月次レポートを作成してください。
+    if report_date is None:
+        report_date = datetime.now()
+    date_str = f"{report_date.year}年{report_date.month}月"
+
+    return f"""今日の日付: {report_date.strftime('%Y年%m月%d日')}
+以下のデータに基づき、テンプレートに従って月次レポートを作成してください。
+レポートのタイトルは「{date_str}」として作成してください。
 
 ## レポートテンプレート
 {template}

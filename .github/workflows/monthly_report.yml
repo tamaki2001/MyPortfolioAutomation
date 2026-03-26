@@ -64,6 +64,17 @@ jobs:
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: python main.py
 
+      - name: Upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-report-${{ github.run_id }}
+          path: |
+            archives/reports/
+            archives/screenshots/
+          retention-days: 90
+          if-no-files-found: warn
+
       - name: Collect debug screenshots
         if: failure()
         run: |
@@ -73,11 +84,11 @@ jobs:
           cp archives/screenshots/*.png debug-output/ 2>/dev/null || true
           ls -la debug-output/ || echo "No debug files found"
 
-      - name: Upload artifacts on failure
+      - name: Upload debug artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: debug-screenshots
+          name: debug-screenshots-${{ github.run_id }}
           path: debug-output/
           retention-days: 7
           if-no-files-found: warn
