@@ -379,8 +379,8 @@ def _extract_via_playwright(page: Page) -> dict:
             const tag = node.tagName;
             const text = (node.textContent || '').trim();
 
-            // セクション見出しを検出
-            if (tag === 'H2' || tag === 'H3') {
+            // セクション見出しを検出（マネーフォワードは H1 タグを使用）
+            if (tag === 'H1' || tag === 'H2' || tag === 'H3') {
                 if (text.includes('預金') || text.includes('現金')) {
                     currentType = 'cash';
                 } else if (text.includes('株式') && text.includes('現物')) {
