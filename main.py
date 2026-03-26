@@ -126,8 +126,12 @@ def main():
             date_str=str(today),
             portfolio_data=portfolio_data,
         )
-        drive.upload_file(str(HISTORY_CSV))
-        print("  -> history.csv 更新・アップロード完了")
+        try:
+            drive.upload_file(str(HISTORY_CSV))
+            print("  -> history.csv 更新・アップロード完了")
+        except Exception as drive_err:
+            print(f"  -> [WARN] Drive アップロードスキップ: {drive_err}")
+            print("  -> history.csv はローカルに保存済み（ワークフロー続行）")
 
         # ----------------------------------------------------------
         # Step 4: 外部コンテキスト取得
@@ -173,7 +177,10 @@ def main():
 
         report_path = REPORTS_DIR / f"{tag}_report.md"
         report_path.write_text(report_md, encoding="utf-8")
-        drive.upload_file(str(report_path))
+        try:
+            drive.upload_file(str(report_path))
+        except Exception as drive_err:
+            print(f"  -> [WARN] レポート Drive アップロードスキップ: {drive_err}")
         print(f"  -> レポート保存: {report_path}")
 
         # ----------------------------------------------------------

@@ -101,8 +101,8 @@ def scrape_portfolio(
             # ページ全文テキスト取得（レポート生成用）
             asset_text = page.inner_text("body")
 
-            # 構造化データ抽出（JavaScript で DOM を解析）
-            raw_data = _extract_portfolio_data(page)
+            # テキストベースでデータ抽出（DOM解析よりも安定）
+            raw_data = _extract_from_text(asset_text)
             raw_data["asset_text"] = asset_text
 
             # VT 特殊ルール適用
@@ -227,234 +227,88 @@ def _navigate_to_portfolio(page: Page) -> None:
 
 
 # ================================================================
-# データ抽出（実際のマネーフォワード DOM 構造に基づく）
+# データ抽出（テキストベース — DOM構造に依存しない安定方式）
 # ================================================================
 
-def _extract_portfolio_data(page: Page) -> dict:
+def _extract_from_text(asset_text: str) -> dict:
     """
-    ポートフォリオページから全データを JavaScript で構造的に抽出する。
+    page.inner_text("body") の結果からポートフォリオデータを抽出する。
 
-    マネーフォワード ME のポートフォリオページ構造（2026年3月時点）:
-      - 資産総額：h2 の隣に表示
-      - 「資産の内訳」テーブル: 各カテゴリの合計と割合
-      - 各カテゴリセクション:
-        - 「預金・現金・暗号資産」: heading + 合計 + 明細テーブル
-        - 「株式（現物）」: heading + 合計 + 銘柄テーブル（コード付き）
-        - 「投資信託」: heading + 合計 + 銘柄テーブル
-        - 「不動産」: heading + 合計 + 物件テーブル
-        - 「ポイント・マイル」: heading + 合計 + 明細テーブル
+    マネーフォワード ME のポートフォリオページは
+    テキスト出力で以下のような構造になる:
+
+      資産総額： 175,407,600円
+      ...
+      預金・現金・暗号資産  15,749,086円  8.98%
+      株式（現物）          78,680,398円  44.86%
+      投資信託              60,947,032円  34.75%
+      ...
+      合計：15,749,086円
+      ... (現金明細)
+      合計：78,680,398円
+      銘柄コード  銘柄名  保有数 ...
+      8136  サンリオ  300  1,996  5,178  1,553,400円 ...
+      AVGO  ブロードコム  130  ...
     """
-    data = page.evaluate("""() => {
-        // ユーティリティ: テキストから数値を抽出
-        function parseNum(text) {
-            if (!text) return 0;
-            const cleaned = text.replace(/円/g, '').replace(/¥/g, '')
-                               .replace(/,/g, '').replace(/\\s/g, '').trim();
-            const m = cleaned.match(/-?[\\d]+\\.?\\d*/);
-            return m ? parseFloat(m[0]) : 0;
-        }
+    lines = asset_text.split("\n")
+    lines = [l.strip() for l in lines if l.strip()]
 
-        // ユーティリティ: % テキストをそのまま返す
-        function parsePct(text) {
-            if (!text) return '';
-            const m = text.match(/-?[\\d.]+%/);
-            return m ? m[0] : text.trim();
-        }
+    # --- 資産総額 ---
+    total_value = 0.0
+    for line in lines:
+        m = re.search(r"資産総額[：:\s]+([\d,]+)円", line)
+        if m:
+            total_value = _parse_number(m.group(1))
+            break
 
-        const result = {
-            total_value: 0,
-            categories: {},
-            stocks: [],
-            funds: [],
-            cash_details: [],
-            real_estate: [],
-        };
+    # --- カテゴリ合計（「資産の内訳」テーブル部分） ---
+    categories = {}
+    cat_patterns = [
+        ("cash", r"預金・現金・暗号資産\s+([\d,]+)円"),
+        ("stocks", r"株式（現物）\s+([\d,]+)円"),
+        ("funds", r"投資信託\s+([\d,]+)円"),
+        ("real_estate", r"不動産\s+([\d,]+)円"),
+        ("points", r"ポイント・マイル\s+([\d,]+)円"),
+    ]
+    for key, pattern in cat_patterns:
+        for line in lines:
+            m = re.search(pattern, line)
+            if m:
+                categories[key] = _parse_number(m.group(1))
+                break
 
-        // --- 資産総額 ---
-        // "資産総額： XXX円" のテキストを探す
-        const allText = document.body.innerText;
-        const totalMatch = allText.match(/資産総額[：:]+\\s*([\\d,]+)円/);
-        if (totalMatch) {
-            result.total_value = parseNum(totalMatch[1]);
-        }
+    print(f"  -> カテゴリ合計: {categories}")
 
-        // --- セクションを region 要素で走査 ---
-        const regions = document.querySelectorAll('section, div[class*="bs-"]');
+    # --- セクション分割 ---
+    # テキストをセクションに分割して各パートを個別にパース
+    full_text = "\n".join(lines)
 
-        // --- 全 heading（h2, h3）からセクションを特定 ---
-        const headings = document.querySelectorAll('h2, h3');
-        headings.forEach(h => {
-            const text = h.innerText.trim();
+    # 株式（現物）セクション
+    holdings = _parse_stock_section(full_text)
 
-            // 合計金額のパターン: "合計：XXX円"
-            const sumMatch = text.match(/合計[：:]([\\d,]+)円/);
+    # 投資信託セクション
+    funds = _parse_fund_section(full_text)
 
-            if (text.includes('預金') || text.includes('現金')) {
-                if (sumMatch) result.categories['cash'] = parseNum(sumMatch[1]);
-
-                // 現金明細テーブルを取得
-                const section = h.closest('section, div[class*="region"], [role="region"]')
-                                || h.parentElement?.parentElement;
-                if (section) {
-                    const table = section.querySelector('table');
-                    if (table) {
-                        const rows = table.querySelectorAll('tr');
-                        // ヘッダー行以外を処理
-                        // 現金テーブル: 種類・名称 | 金額 | 保有金融機関
-                        for (let i = 0; i < rows.length; i++) {
-                            const cells = rows[i].querySelectorAll('td');
-                            if (cells.length >= 2) {
-                                const name = cells[0]?.innerText?.trim() || '';
-                                const value = parseNum(cells[1]?.innerText || '0');
-                                const broker = cells[2]?.innerText?.trim() || '';
-                                if (name && value > 0) {
-                                    result.cash_details.push({
-                                        name: name, value: value, broker: broker
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (text.includes('株式') && text.includes('現物')) {
-                if (sumMatch) result.categories['stocks'] = parseNum(sumMatch[1]);
-
-                // 株式テーブルを取得
-                const section = h.closest('section, div[class*="region"], [role="region"]')
-                                || h.parentElement?.parentElement;
-                if (section) {
-                    const table = section.querySelector('table');
-                    if (table) {
-                        const rows = table.querySelectorAll('tr');
-                        // 株式テーブル: 銘柄コード | 銘柄名 | 保有数 | 平均取得単価 | 現在値 | 評価額 | 前日比 | 評価損益 | 評価損益率 | 保有金融機関
-                        for (let i = 0; i < rows.length; i++) {
-                            const cells = rows[i].querySelectorAll('td');
-                            if (cells.length >= 6) {
-                                // テーブル列のインデックス
-                                let idx = 0;
-                                const ticker = cells[idx++]?.innerText?.trim() || '';
-                                const name = cells[idx++]?.innerText?.trim() || '';
-                                const quantity = parseNum(cells[idx++]?.innerText);
-                                const avgCost = parseNum(cells[idx++]?.innerText);
-                                const curPrice = parseNum(cells[idx++]?.innerText);
-                                const evalValue = parseNum(cells[idx++]?.innerText);
-                                const dayChange = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
-                                const gainLoss = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
-                                const gainLossPct = idx < cells.length ? parsePct(cells[idx++]?.innerText) : '';
-                                const broker = idx < cells.length ? cells[idx++]?.innerText?.trim() : '';
-
-                                if (name && evalValue > 0) {
-                                    result.stocks.push({
-                                        ticker, name, quantity, avgCost, curPrice,
-                                        value: evalValue, dayChange, gainLoss, gainLossPct, broker
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (text.includes('投資信託') && !text.includes('外国')) {
-                if (sumMatch) result.categories['funds'] = parseNum(sumMatch[1]);
-
-                // 投信テーブルを取得
-                const section = h.closest('section, div[class*="region"], [role="region"]')
-                                || h.parentElement?.parentElement;
-                if (section) {
-                    const table = section.querySelector('table');
-                    if (table) {
-                        const rows = table.querySelectorAll('tr');
-                        // 投資信託テーブル: 銘柄名 | 保有数 | 平均取得単価 | 基準価額 | 評価額 | 前日比 | 評価損益 | 評価損益率 | 保有金融機関
-                        for (let i = 0; i < rows.length; i++) {
-                            const cells = rows[i].querySelectorAll('td');
-                            if (cells.length >= 5) {
-                                let idx = 0;
-                                const name = cells[idx++]?.innerText?.trim() || '';
-                                const quantity = parseNum(cells[idx++]?.innerText);
-                                const avgCost = parseNum(cells[idx++]?.innerText);
-                                const nav = parseNum(cells[idx++]?.innerText);
-                                const evalValue = parseNum(cells[idx++]?.innerText);
-                                const dayChange = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
-                                const gainLoss = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
-                                const gainLossPct = idx < cells.length ? parsePct(cells[idx++]?.innerText) : '';
-                                const broker = idx < cells.length ? cells[idx++]?.innerText?.trim() : '';
-
-                                if (name && evalValue > 0) {
-                                    result.funds.push({
-                                        name, quantity, avgCost, nav,
-                                        value: evalValue, dayChange, gainLoss, gainLossPct, broker
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (text.includes('不動産')) {
-                if (sumMatch) result.categories['real_estate'] = parseNum(sumMatch[1]);
-            }
-
-            if (text.includes('ポイント') || text.includes('マイル')) {
-                if (sumMatch) result.categories['points'] = parseNum(sumMatch[1]);
-            }
-        });
-
-        return result;
-    }""")
-
-    print(f"  -> 抽出結果: 総資産={data.get('total_value', 0):,.0f}円")
-    print(f"     カテゴリ: {data.get('categories', {})}")
-    print(f"     株式銘柄数: {len(data.get('stocks', []))}")
-    print(f"     投信銘柄数: {len(data.get('funds', []))}")
-    print(f"     現金明細数: {len(data.get('cash_details', []))}")
-
-    # 構造化データを返却形式に変換
-    holdings = []
-    for s in data.get("stocks", []):
-        holdings.append({
-            "ticker": s.get("ticker", ""),
-            "name": s.get("name", ""),
-            "value": s.get("value", 0),
-            "quantity": s.get("quantity", 0),
-            "price": s.get("curPrice", 0),
-            "gain_loss": s.get("gainLoss", 0),
-            "gain_loss_pct": s.get("gainLossPct", ""),
-            "broker": s.get("broker", ""),
-        })
-
-    funds = []
-    for f in data.get("funds", []):
-        funds.append({
-            "name": f.get("name", ""),
-            "value": f.get("value", 0),
-            "quantity": f.get("quantity", 0),
-            "nav": f.get("nav", 0),
-            "gain_loss": f.get("gainLoss", 0),
-            "gain_loss_pct": f.get("gainLossPct", ""),
-            "broker": f.get("broker", ""),
-        })
-
-    cash_details = data.get("cash_details", [])
-    categories = data.get("categories", {})
+    # 預金・現金セクション
+    cash_details = _parse_cash_section(full_text)
 
     cash_jpy = categories.get("cash", 0)
     stock_value = categories.get("stocks", 0)
     fund_value = categories.get("funds", 0)
     real_estate_value = categories.get("real_estate", 0)
-    total_value = data.get("total_value", 0)
 
-    # 合計が取れなかった場合は個別の合計から
     if total_value == 0:
-        total_value = cash_jpy + stock_value + fund_value + real_estate_value
+        total_value = sum(categories.values())
+
+    print(f"  -> 抽出結果: 総資産={total_value:,.0f}円")
+    print(f"     株式銘柄数: {len(holdings)}")
+    print(f"     投信銘柄数: {len(funds)}")
+    print(f"     現金明細数: {len(cash_details)}")
 
     return {
         "total_value": total_value,
         "cash_jpy": cash_jpy,
-        "cash_usd": 0.0,  # VT ルール適用後に設定
+        "cash_usd": 0.0,
         "stock_value": stock_value,
         "fund_value": fund_value,
         "real_estate_value": real_estate_value,
@@ -462,6 +316,298 @@ def _extract_portfolio_data(page: Page) -> dict:
         "funds": funds,
         "cash_details": cash_details,
     }
+
+
+def _parse_stock_section(text: str) -> list[dict]:
+    """
+    株式（現物）セクションからテキストベースで銘柄を抽出する。
+
+    テキスト内の株式銘柄パターン:
+      行が ティッカー(英字or4桁数字) で始まり、その後に銘柄名と数値が続く。
+
+    実データ例（アクセシビリティツリーから取得済み）:
+      8136  サンリオ  300  1,996  5,178  1,553,400円  -36,600円  954,600円  159.42%  楽天証券
+      AVGO  ブロードコム  130  339.60  318.81  6,609,696円  ...  SBI証券
+      バンガード トータル ワールド ストックETF  478  146.10  139.17  10,609,129円  ...  SBI証券
+    """
+    holdings = []
+
+    # 株式セクションの開始を見つける
+    stock_start = text.find("株式（現物）")
+    if stock_start == -1:
+        return holdings
+
+    # 次のセクション（投資信託）の手前までを対象
+    stock_end = text.find("投資信託", stock_start + 10)
+    if stock_end == -1:
+        stock_end = len(text)
+
+    stock_text = text[stock_start:stock_end]
+    lines = stock_text.split("\n")
+
+    # パターン1: ティッカー付き行 (AVGO, GOOG, 8136 etc.)
+    # パターン2: 名前のみ行 (バンガード トータル ワールド ストックETF)
+    ticker_pattern = re.compile(
+        r"^([A-Z]{1,5}|\d{4})\s+"  # ティッカー or 銘柄コード
+        r"(.+?)\s+"                 # 銘柄名
+        r"([\d,.]+)\s+"             # 保有数
+        r"([\d,.]+)\s+"             # 平均取得単価
+        r"([\d,.]+)\s+"             # 現在値
+        r"([\d,]+)円"               # 評価額
+    )
+
+    # VTなどの名前が長い銘柄用（ティッカーなし）
+    name_pattern = re.compile(
+        r"^(バンガード[^\d]+?|eMAXIS[^\d]+?)\s+"  # 銘柄名
+        r"([\d,.]+)\s+"                            # 保有数
+        r"([\d,.]+)\s+"                            # 平均取得単価
+        r"([\d,.]+)\s+"                            # 現在値
+        r"([\d,]+)円"                              # 評価額
+    )
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # パターン1: ティッカー付き
+        m = ticker_pattern.match(line)
+        if m:
+            ticker = m.group(1)
+            name = m.group(2).strip()
+            quantity = _parse_number(m.group(3))
+            price = _parse_number(m.group(5))
+            value = _parse_number(m.group(6))
+
+            # 評価損益・損益率・金融機関を残りテキストから抽出
+            rest = line[m.end():]
+            gain_loss = 0.0
+            gain_loss_pct = ""
+            broker = ""
+
+            nums = re.findall(r"-?[\d,]+円", rest)
+            if len(nums) >= 2:
+                gain_loss = _parse_number(nums[1])  # 2番目が評価損益
+            pct = re.search(r"-?[\d.]+%", rest)
+            if pct:
+                gain_loss_pct = pct.group()
+            broker_m = re.search(r"(SBI証券|楽天証券|マネックス証券|auカブコム証券)", rest)
+            if broker_m:
+                broker = broker_m.group(1)
+
+            if value > 0:
+                holdings.append({
+                    "ticker": ticker,
+                    "name": name,
+                    "value": value,
+                    "quantity": quantity,
+                    "price": price,
+                    "gain_loss": gain_loss,
+                    "gain_loss_pct": gain_loss_pct,
+                    "broker": broker,
+                })
+            continue
+
+        # パターン2: 名前のみ（VT等）
+        m = name_pattern.match(line)
+        if m:
+            name = m.group(1).strip()
+            quantity = _parse_number(m.group(2))
+            price = _parse_number(m.group(4))
+            value = _parse_number(m.group(5))
+
+            # VTのティッカー推定
+            ticker = ""
+            if "バンガード" in name and "トータル" in name and "ワールド" in name:
+                ticker = "VT"
+
+            rest = line[m.end():]
+            broker_m = re.search(r"(SBI証券|楽天証券)", rest)
+            broker = broker_m.group(1) if broker_m else ""
+
+            if value > 0:
+                holdings.append({
+                    "ticker": ticker or name[:10],
+                    "name": name,
+                    "value": value,
+                    "quantity": quantity,
+                    "price": price,
+                    "gain_loss": 0.0,
+                    "gain_loss_pct": "",
+                    "broker": broker,
+                })
+
+    # フォールバック: 正規表現で取れなかった場合、
+    # 「XX,XXX,XXX円」パターンの金額をキーワードと紐付け
+    if not holdings:
+        print("  -> [WARNING] 正規表現パースに失敗。フォールバック抽出を実行")
+        holdings = _fallback_stock_extract(stock_text)
+
+    return holdings
+
+
+def _fallback_stock_extract(stock_text: str) -> list[dict]:
+    """
+    正規表現パースに失敗した場合のフォールバック。
+    テキスト内の既知の銘柄名と金額を紐付ける。
+    """
+    known_tickers = {
+        "サンリオ": "8136",
+        "ブロードコム": "AVGO",
+        "コストコ": "COST",
+        "アルファベット": "GOOG",
+        "インテューイティブ": "ISRG",
+        "イーライ リリィ": "LLY",
+        "イーライリリー": "LLY",
+        "マイクロソフト": "MSFT",
+        "エヌビディア": "NVDA",
+        "バンガード トータル ワールド ストックETF": "VT",
+        "バンガード": "VT",
+    }
+
+    holdings = []
+    lines = stock_text.split("\n")
+
+    for i, line in enumerate(lines):
+        for name_key, ticker in known_tickers.items():
+            if name_key in line:
+                # この行と前後の行から金額を探す
+                context = "\n".join(lines[max(0, i-1):min(len(lines), i+3)])
+                amounts = re.findall(r"([\d,]+)円", context)
+                if amounts:
+                    # 最大の金額を評価額とする
+                    values = [_parse_number(a) for a in amounts]
+                    value = max(values) if values else 0
+                    if value > 10000:
+                        # 重複チェック
+                        if not any(h["ticker"] == ticker and h["value"] == value for h in holdings):
+                            holdings.append({
+                                "ticker": ticker,
+                                "name": name_key,
+                                "value": value,
+                                "quantity": 0,
+                                "price": 0,
+                                "gain_loss": 0,
+                                "gain_loss_pct": "",
+                                "broker": "",
+                            })
+                break
+
+    return holdings
+
+
+def _parse_fund_section(text: str) -> list[dict]:
+    """投資信託セクションから銘柄を抽出する。"""
+    funds = []
+
+    fund_start = text.find("投資信託")
+    if fund_start == -1:
+        return funds
+
+    # 次のセクション
+    fund_end = text.find("不動産", fund_start + 5)
+    if fund_end == -1:
+        fund_end = text.find("ポイント", fund_start + 5)
+    if fund_end == -1:
+        fund_end = len(text)
+
+    fund_text = text[fund_start:fund_end]
+
+    # 投信パターン: 銘柄名  保有口数  取得単価  基準価額  評価額
+    fund_pattern = re.compile(
+        r"(eMAXIS[^\n]*?|ひふみ[^\n]*?|楽天[^\n]*?投信[^\n]*?)\s+"
+        r"([\d,]+)\s+"          # 保有口数
+        r"([\d,]+)\s+"          # 取得単価
+        r"([\d,]+)\s+"          # 基準価額
+        r"([\d,]+)円"           # 評価額
+    )
+
+    for m in fund_pattern.finditer(fund_text):
+        name = m.group(1).strip()
+        quantity = _parse_number(m.group(2))
+        nav = _parse_number(m.group(4))
+        value = _parse_number(m.group(5))
+
+        rest = fund_text[m.end():m.end() + 200]
+        gain_loss_pct = ""
+        pct = re.search(r"-?[\d.]+%", rest)
+        if pct:
+            gain_loss_pct = pct.group()
+        broker_m = re.search(r"(楽天証券|SBI証券)", rest)
+        broker = broker_m.group(1) if broker_m else ""
+
+        if value > 0:
+            funds.append({
+                "name": name,
+                "value": value,
+                "quantity": quantity,
+                "nav": nav,
+                "gain_loss": 0.0,
+                "gain_loss_pct": gain_loss_pct,
+                "broker": broker,
+            })
+
+    # フォールバック: "合計：XX円" からセクション合計だけでも取得
+    if not funds:
+        m = re.search(r"合計[：:]([\d,]+)円", fund_text)
+        if m:
+            total = _parse_number(m.group(1))
+            if total > 0:
+                # eMAXISの文字列を探して名前を推定
+                name_m = re.search(r"(eMAXIS\s+Slim[^\n]+)", fund_text)
+                name = name_m.group(1).strip() if name_m else "投資信託合計"
+                funds.append({
+                    "name": name,
+                    "value": total,
+                    "quantity": 0,
+                    "nav": 0,
+                    "gain_loss": 0.0,
+                    "gain_loss_pct": "",
+                    "broker": "",
+                })
+
+    return funds
+
+
+def _parse_cash_section(text: str) -> list[dict]:
+    """預金・現金セクションから明細を抽出する。"""
+    details = []
+
+    cash_start = text.find("預金・現金・暗号資産")
+    if cash_start == -1:
+        return details
+
+    cash_end = text.find("株式（現物）", cash_start + 10)
+    if cash_end == -1:
+        cash_end = min(cash_start + 3000, len(text))
+
+    cash_text = text[cash_start:cash_end]
+    lines = cash_text.split("\n")
+
+    # 各行から「名称  金額円  金融機関」パターンを探す
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        # 金額パターンを含む行
+        amounts = re.findall(r"([\d,]+)円", line)
+        if amounts:
+            value = _parse_number(amounts[0])
+            if value > 0:
+                # 行頭が名称
+                name = re.split(r"\d", line)[0].strip()
+                if not name or len(name) < 2:
+                    continue
+                if "合計" in name or "資産" in name:
+                    continue
+                details.append({
+                    "name": name,
+                    "value": value,
+                    "broker": "",
+                })
+
+    return details
 
 
 # ================================================================

@@ -119,20 +119,32 @@ class DriveHandler:
         )
 
         if existing_id:
-            # 更新
+            # 更新（既存ファイルのオーナーのクォータを使用）
             file = (
                 self.service.files()
-                .update(fileId=existing_id, media_body=media)
+                .update(
+                    fileId=existing_id,
+                    media_body=media,
+                    supportsAllDrives=True,
+                )
                 .execute()
             )
         else:
             # 新規作成
-            file_metadata = {"name": filename}
-            if folder_id:
-                file_metadata["parents"] = [folder_id]
+            # ※ サービスアカウントにはストレージ容量がないため、
+            #    必ず共有フォルダ（parents指定）に作成する必要がある。
+            if not folder_id:
+                print(f"  [WARN] フォルダIDが未設定のため Drive アップロードをスキップ: {filename}")
+                return ""
+            file_metadata = {"name": filename, "parents": [folder_id]}
             file = (
                 self.service.files()
-                .create(body=file_metadata, media_body=media, fields="id")
+                .create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields="id",
+                    supportsAllDrives=True,
+                )
                 .execute()
             )
 
