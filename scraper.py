@@ -128,20 +128,48 @@ def scrape_portfolio(
             # ポートフォリオページにアクセス
             _navigate_to_portfolio(page)
 
+            # ページ末尾までスクロールして遅延読み込みを完了させる
+            print("  -> ページ全体をスクロール中（遅延読み込み対応）...")
+            page.evaluate("""async () => {
+                // ページを段階的にスクロールして全コンテンツをロード
+                const delay = ms => new Promise(r => setTimeout(r, ms));
+                const height = document.body.scrollHeight;
+                const step = 500;
+                for (let y = 0; y <= height; y += step) {
+                    window.scrollTo(0, y);
+                    await delay(200);
+                }
+                // 末尾で少し待つ
+                window.scrollTo(0, document.body.scrollHeight);
+                await delay(1000);
+                // 先頭に戻る（スクリーンショット用）
+                window.scrollTo(0, 0);
+                await delay(500);
+            }""")
+            page.wait_for_timeout(2000)
+
             # スクリーンショット撮影
             page.screenshot(path=screenshot_path, full_page=True)
             print(f"  -> スクリーンショット撮影完了: {screenshot_path}")
 
-            # ページ全文テキスト取得（レポート生成用）
-            asset_text = page.inner_text("body")
+            # データ抽出: HTMLソースから直接パース（inner_textより確実）
+            html_content = page.content()
+            print(f"  -> HTML全体長: {len(html_content)} 文字")
 
-            # デバッグ: ページテキストの先頭部分を出力
-            preview = asset_text[:1000].replace("\n", " | ")
-            print(f"  -> ページテキスト先頭: {preview}")
+            # inner_text も取得（レポート生成用）
+            asset_text = page.inner_text("body")
             print(f"  -> ページテキスト全体長: {len(asset_text)} 文字")
 
-            # テキストベースでデータ抽出（DOM解析よりも安定）
-            raw_data = _extract_from_text(asset_text)
+            # デバッグ: テキストの末尾部分を出力（株式データが含まれているか）
+            tail = asset_text[-500:].replace("\n", " | ") if len(asset_text) > 500 else asset_text.replace("\n", " | ")
+            print(f"  -> ページテキスト末尾: {tail}")
+
+            # HTML ベースでデータ抽出（テーブル構造から正確にパース）
+            raw_data = _extract_from_html(html_content)
+            # inner_text もフォールバック用に使用
+            if not raw_data.get("holdings") and not raw_data.get("funds"):
+                print("  -> HTML抽出失敗、テキストベースにフォールバック")
+                raw_data = _extract_from_text(asset_text)
             raw_data["asset_text"] = asset_text
 
             # VT 特殊ルール適用
@@ -266,7 +294,229 @@ def _navigate_to_portfolio(page: Page) -> None:
 
 
 # ================================================================
-# データ抽出（テキストベース — DOM構造に依存しない安定方式）
+# データ抽出（HTML ベース — テーブルの td 要素から直接パース）
+# ================================================================
+
+def _extract_from_html(html: str) -> dict:
+    """
+    HTMLソースからテーブルデータを正規表現で直接抽出する。
+
+    マネーフォワードのポートフォリオページのHTML構造:
+      - <td> タグの中に各セルの値が入っている
+      - テーブルは資産カテゴリごとにセクション分けされている
+      - 株式テーブル: 銘柄コード, 銘柄名, 保有数, 取得単価, 現在値, 評価額, ...
+      - 投信テーブル: 銘柄名, 保有口数, 取得単価, 基準価額, 評価額, ...
+    """
+    from html.parser import HTMLParser
+
+    # --- 簡易HTML→テキスト変換（タグを除去し、td/trの区切りを保持）---
+    class TableExtractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.sections = []  # [(section_name, [rows])]
+            self.current_section = ""
+            self.current_row = []
+            self.current_cell = ""
+            self.in_td = False
+            self.in_th = False
+            self.in_heading = False
+            self.depth = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("h2", "h3"):
+                self.in_heading = True
+                self.current_cell = ""
+            elif tag == "td":
+                self.in_td = True
+                self.current_cell = ""
+            elif tag == "th":
+                self.in_th = True
+                self.current_cell = ""
+            elif tag == "tr":
+                self.current_row = []
+
+        def handle_endtag(self, tag):
+            if tag in ("h2", "h3"):
+                self.in_heading = False
+                heading_text = self.current_cell.strip()
+                if heading_text:
+                    self.current_section = heading_text
+            elif tag == "td":
+                self.in_td = False
+                self.current_row.append(self.current_cell.strip())
+            elif tag == "th":
+                self.in_th = False
+            elif tag == "tr":
+                if self.current_row:
+                    self.sections.append((self.current_section, self.current_row))
+                self.current_row = []
+
+        def handle_data(self, data):
+            if self.in_td or self.in_heading:
+                self.current_cell += data
+
+    parser = TableExtractor()
+    parser.feed(html)
+
+    # --- 各セクションのデータを構造化 ---
+    total_value = 0.0
+    categories = {}
+    holdings = []
+    funds = []
+    cash_details = []
+
+    # 総資産を抽出
+    m = re.search(r"資産総額[：:\s]+([\d,]+)円", html)
+    if m:
+        total_value = _parse_number(m.group(1))
+
+    # カテゴリ合計を抽出（「資産の内訳」テーブル）
+    cat_patterns = [
+        ("cash", r"預金・現金・暗号資産[^<]*?([\d,]+)円"),
+        ("stocks", r"株式（現物）[^<]*?([\d,]+)円"),
+        ("funds", r"投資信託[^<]*?([\d,]+)円"),
+        ("real_estate", r"不動産[^<]*?([\d,]+)円"),
+        ("points", r"ポイント・マイル[^<]*?([\d,]+)円"),
+    ]
+    for key, pattern in cat_patterns:
+        m_cat = re.search(pattern, html)
+        if m_cat:
+            categories[key] = _parse_number(m_cat.group(1))
+
+    # --- セクションごとにテーブル行をパース ---
+    current_section_type = ""
+
+    for section_name, row_cells in parser.sections:
+        # セクション判定
+        if "預金" in section_name or "現金" in section_name:
+            current_section_type = "cash"
+        elif "株式" in section_name and "現物" in section_name:
+            current_section_type = "stocks"
+        elif "投資信託" in section_name:
+            current_section_type = "funds"
+        elif "不動産" in section_name:
+            current_section_type = "real_estate"
+        elif "ポイント" in section_name:
+            current_section_type = "points"
+
+        # --- 株式テーブル行 ---
+        # 列: 銘柄コード, 銘柄名, 保有数, 平均取得単価, 現在値, 評価額, 前日比, 評価損益, 評価損益率, 保有金融機関
+        if current_section_type == "stocks" and len(row_cells) >= 6:
+            # ヘッダー行をスキップ（数値でない行）
+            ticker = row_cells[0].strip()
+            name = row_cells[1].strip() if len(row_cells) > 1 else ""
+
+            # ティッカーが英字/数字で始まるか確認
+            if not ticker or ticker in ("銘柄コード", "種類・名称"):
+                continue
+
+            try:
+                quantity = _parse_number(row_cells[2]) if len(row_cells) > 2 else 0
+                avg_cost = _parse_number(row_cells[3]) if len(row_cells) > 3 else 0
+                cur_price = _parse_number(row_cells[4]) if len(row_cells) > 4 else 0
+                value = _parse_number(row_cells[5]) if len(row_cells) > 5 else 0
+                gain_loss = _parse_number(row_cells[7]) if len(row_cells) > 7 else 0
+                gain_loss_pct = row_cells[8].strip() if len(row_cells) > 8 else ""
+                broker = row_cells[9].strip() if len(row_cells) > 9 else ""
+
+                if value > 0:
+                    # VT等ティッカーなしの場合、名前からティッカーを推定
+                    if not re.match(r'^[A-Z0-9]{1,5}$', ticker):
+                        # ティッカーが名前に埋もれているケース
+                        if "バンガード" in ticker or "バンガード" in name:
+                            name = ticker + " " + name if name else ticker
+                            ticker = "VT"
+                        else:
+                            name = ticker + " " + name if name else ticker
+                            ticker = name[:5]
+
+                    holdings.append({
+                        "ticker": ticker,
+                        "name": name,
+                        "value": value,
+                        "quantity": quantity,
+                        "price": cur_price,
+                        "gain_loss": gain_loss,
+                        "gain_loss_pct": gain_loss_pct,
+                        "broker": broker,
+                    })
+            except (ValueError, IndexError):
+                continue
+
+        # --- 投資信託テーブル行 ---
+        # 列: 銘柄名, 保有口数, 平均取得単価, 基準価額, 評価額, 前日比, 評価損益, 評価損益率, 保有金融機関
+        elif current_section_type == "funds" and len(row_cells) >= 5:
+            name = row_cells[0].strip()
+            if not name or name in ("銘柄名", "種類・名称"):
+                continue
+
+            try:
+                quantity = _parse_number(row_cells[1]) if len(row_cells) > 1 else 0
+                nav = _parse_number(row_cells[3]) if len(row_cells) > 3 else 0
+                value = _parse_number(row_cells[4]) if len(row_cells) > 4 else 0
+                gain_loss = _parse_number(row_cells[6]) if len(row_cells) > 6 else 0
+                gain_loss_pct = row_cells[7].strip() if len(row_cells) > 7 else ""
+                broker = row_cells[8].strip() if len(row_cells) > 8 else ""
+
+                if value > 0:
+                    funds.append({
+                        "name": name,
+                        "value": value,
+                        "quantity": quantity,
+                        "nav": nav,
+                        "gain_loss": gain_loss,
+                        "gain_loss_pct": gain_loss_pct,
+                        "broker": broker,
+                    })
+            except (ValueError, IndexError):
+                continue
+
+        # --- 現金テーブル行 ---
+        elif current_section_type == "cash" and len(row_cells) >= 2:
+            name = row_cells[0].strip()
+            if not name or name in ("種類・名称", "銘柄コード"):
+                continue
+            try:
+                value = _parse_number(row_cells[1])
+                broker = row_cells[2].strip() if len(row_cells) > 2 else ""
+                if value > 0:
+                    cash_details.append({
+                        "name": name,
+                        "value": value,
+                        "broker": broker,
+                    })
+            except (ValueError, IndexError):
+                continue
+
+    print(f"  -> HTML抽出: 株式={len(holdings)}, 投信={len(funds)}, 現金={len(cash_details)}")
+    for h in holdings:
+        print(f"     [{h['ticker']}] {h['name']}: {h['value']:,.0f}円 ({h['quantity']}株)")
+    for f in funds:
+        print(f"     [投信] {f['name'][:30]}: {f['value']:,.0f}円")
+
+    cash_jpy = categories.get("cash", 0)
+    stock_value = categories.get("stocks", 0)
+    fund_value = categories.get("funds", 0)
+    real_estate_value = categories.get("real_estate", 0)
+
+    if total_value == 0:
+        total_value = sum(categories.values())
+
+    return {
+        "total_value": total_value,
+        "cash_jpy": cash_jpy,
+        "cash_usd": 0.0,
+        "stock_value": stock_value,
+        "fund_value": fund_value,
+        "real_estate_value": real_estate_value,
+        "holdings": holdings,
+        "funds": funds,
+        "cash_details": cash_details,
+    }
+
+
+# ================================================================
+# データ抽出（テキストベース — フォールバック用）
 # ================================================================
 
 def _extract_from_text(asset_text: str) -> dict:
