@@ -128,49 +128,61 @@ def scrape_portfolio(
             # ポートフォリオページにアクセス
             _navigate_to_portfolio(page)
 
-            # ページ末尾までスクロールして遅延読み込みを完了させる
-            print("  -> ページ全体をスクロール中（遅延読み込み対応）...")
+            # ─────────────────────────────────────────────────────────
+            # ページ全体をスクロールして AJAX データを完全ロード
+            # wait_for_load_state("networkidle") で非同期リクエスト完了まで待機
+            # ─────────────────────────────────────────────────────────
+            print("  -> ページスクロール中（AJAX遅延読み込み対応）...")
             page.evaluate("""async () => {
-                // ページを段階的にスクロールして全コンテンツをロード
                 const delay = ms => new Promise(r => setTimeout(r, ms));
-                const height = document.body.scrollHeight;
-                const step = 500;
-                for (let y = 0; y <= height; y += step) {
-                    window.scrollTo(0, y);
-                    await delay(200);
+                const step = 600;
+                let lastH = 0;
+                for (let i = 0; i < 30; i++) {
+                    const h = document.body.scrollHeight;
+                    window.scrollTo(0, Math.min(step * i, h));
+                    await delay(300);
+                    if (h === lastH && i > 5) break;
+                    lastH = h;
                 }
-                // 末尾で少し待つ
                 window.scrollTo(0, document.body.scrollHeight);
-                await delay(1000);
-                // 先頭に戻る（スクリーンショット用）
+                await delay(1500);
                 window.scrollTo(0, 0);
-                await delay(500);
             }""")
+            # AJAX完了を待つ
+            page.wait_for_load_state("networkidle", timeout=20000)
             page.wait_for_timeout(2000)
+
+            # 株式テーブルの実データ行が出現するまで待機
+            # （ヘッダー行のみの場合はまだ未ロード → タイムアウトしてもスキップ）
+            print("  -> 株式テーブルのデータ行を待機中...")
+            try:
+                # 株式テーブルの2行目以降（実データ）を待つ
+                page.wait_for_selector(
+                    "table tr:has(td)",   # td を持つ tr＝データ行
+                    timeout=15000,
+                )
+                print("  -> テーブルデータ行の出現を確認")
+            except Exception:
+                print("  -> [WARN] テーブルデータ行タイムアウト（ページ構造を確認）")
 
             # スクリーンショット撮影
             page.screenshot(path=screenshot_path, full_page=True)
             print(f"  -> スクリーンショット撮影完了: {screenshot_path}")
 
-            # データ抽出: HTMLソースから直接パース（inner_textより確実）
-            html_content = page.content()
-            print(f"  -> HTML全体長: {len(html_content)} 文字")
+            # ─────────────────────────────────────────────────────────
+            # Playwright DOM API でテーブル行を直接抽出
+            # inner_text / HTMLパース より確実
+            # ─────────────────────────────────────────────────────────
+            raw_data = _extract_via_playwright(page)
 
-            # inner_text も取得（レポート生成用）
-            asset_text = page.inner_text("body")
-            print(f"  -> ページテキスト全体長: {len(asset_text)} 文字")
-
-            # デバッグ: テキストの末尾部分を出力（株式データが含まれているか）
-            tail = asset_text[-500:].replace("\n", " | ") if len(asset_text) > 500 else asset_text.replace("\n", " | ")
-            print(f"  -> ページテキスト末尾: {tail}")
-
-            # HTML ベースでデータ抽出（テーブル構造から正確にパース）
-            raw_data = _extract_from_html(html_content)
-            # inner_text もフォールバック用に使用
+            # フォールバック: DOM抽出に失敗した場合はテキストベース
             if not raw_data.get("holdings") and not raw_data.get("funds"):
-                print("  -> HTML抽出失敗、テキストベースにフォールバック")
+                print("  -> Playwright DOM抽出失敗、テキストベースにフォールバック")
+                asset_text = page.inner_text("body")
                 raw_data = _extract_from_text(asset_text)
-            raw_data["asset_text"] = asset_text
+
+            if "asset_text" not in raw_data:
+                raw_data["asset_text"] = page.inner_text("body")
 
             # VT 特殊ルール適用
             portfolio = _apply_vt_rule(raw_data, vt_exclude_shares)
@@ -291,6 +303,214 @@ def _navigate_to_portfolio(page: Page) -> None:
         )
 
     print("  -> ポートフォリオページ表示完了")
+
+
+# ================================================================
+# データ抽出（Playwright DOM API — 最も確実な方式）
+# ================================================================
+
+def _extract_via_playwright(page: Page) -> dict:
+    """
+    Playwright の page.evaluate() で DOM を直接走査してデータを抽出する。
+
+    戦略:
+      1. 全セクション見出しを探し、その直後のテーブルを対象とする
+      2. セクション名（"株式（現物）" 等）でテーブルを分類
+      3. 各テーブルの tr > td を配列として取得
+    """
+    result = page.evaluate("""() => {
+        function num(t) {
+            if (!t) return 0;
+            const s = t.replace(/[円,\\s]/g, '').match(/-?[\\d.]+/);
+            return s ? parseFloat(s[0]) : 0;
+        }
+
+        const out = {
+            total_value: 0,
+            categories: {},
+            stocks: [],
+            funds: [],
+            cash: [],
+        };
+
+        // ─── 総資産 ───
+        const bodyText = document.body.innerText;
+        const totalM = bodyText.match(/資産総額[：:\\s]+([\\d,]+)円/);
+        if (totalM) out.total_value = num(totalM[1]);
+
+        // ─── カテゴリ合計 ───
+        const catMap = {
+            cash:         /預金・現金・暗号資産[^\\n]*?([\\d,]+)円/,
+            stocks:       /株式（現物）[^\\n]*?([\\d,]+)円/,
+            funds:        /投資信託[^\\n]*?([\\d,]+)円/,
+            real_estate:  /不動産[^\\n]*?([\\d,]+)円/,
+            points:       /ポイント・マイル[^\\n]*?([\\d,]+)円/,
+        };
+        for (const [k, re] of Object.entries(catMap)) {
+            const m = bodyText.match(re);
+            if (m) out.categories[k] = num(m[1]);
+        }
+
+        // ─── 全セクションを走査 ───
+        // セクション = heading + 直後のテーブル の組み合わせ
+        //
+        // DOM 構造（マネーフォワード 2026年3月時点）:
+        //   <section>
+        //     <h2>株式（現物）</h2>
+        //     <div>
+        //       <h3>合計：XXX円</h3>
+        //       <table>
+        //         <thead><tr><th>銘柄コード</th>...</tr></thead>
+        //         <tbody><tr><td>AVGO</td>...</tr></tbody>
+        //       </table>
+        //     </div>
+        //   </section>
+
+        let currentType = '';
+
+        // 全要素を順番に走査してセクション → テーブルの関係を把握
+        const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_ELEMENT,
+        );
+
+        let node = walker.nextNode();
+        while (node) {
+            const tag = node.tagName;
+            const text = (node.textContent || '').trim();
+
+            // セクション見出しを検出
+            if (tag === 'H2' || tag === 'H3') {
+                if (text.includes('預金') || text.includes('現金')) {
+                    currentType = 'cash';
+                } else if (text.includes('株式') && text.includes('現物')) {
+                    currentType = 'stocks';
+                } else if (text.includes('投資信託')) {
+                    currentType = 'funds';
+                } else if (text.includes('不動産')) {
+                    currentType = 'real_estate';
+                } else if (text.includes('ポイント')) {
+                    currentType = 'points';
+                }
+            }
+
+            // テーブルを処理
+            if (tag === 'TABLE' && currentType) {
+                const rows = Array.from(node.querySelectorAll('tbody tr'));
+
+                rows.forEach(row => {
+                    const cells = Array.from(row.querySelectorAll('td'))
+                                       .map(td => td.innerText.trim());
+                    if (cells.length < 2) return;
+
+                    if (currentType === 'stocks' && cells.length >= 6) {
+                        // 株式: コード, 名前, 保有数, 取得単価, 現在値, 評価額, ...
+                        const ticker = cells[0];
+                        const name   = cells[1];
+                        const qty    = num(cells[2]);
+                        const price  = num(cells[4]);
+                        const val    = num(cells[5]);
+                        const gl     = cells.length > 7 ? num(cells[7]) : 0;
+                        const glpct  = cells.length > 8 ? cells[8] : '';
+                        const broker = cells.length > 9 ? cells[9] : '';
+
+                        if (val > 0) {
+                            out.stocks.push({
+                                ticker, name, quantity: qty,
+                                price, value: val,
+                                gain_loss: gl, gain_loss_pct: glpct, broker
+                            });
+                        }
+                    }
+
+                    else if (currentType === 'funds' && cells.length >= 5) {
+                        // 投信: 名前, 口数, 取得単価, 基準価額, 評価額, ...
+                        const name  = cells[0];
+                        const qty   = num(cells[1]);
+                        const nav   = num(cells[3]);
+                        const val   = num(cells[4]);
+                        const gl    = cells.length > 6 ? num(cells[6]) : 0;
+                        const glpct = cells.length > 7 ? cells[7] : '';
+                        const broker= cells.length > 8 ? cells[8] : '';
+
+                        if (val > 0) {
+                            out.funds.push({
+                                name, quantity: qty, nav, value: val,
+                                gain_loss: gl, gain_loss_pct: glpct, broker
+                            });
+                        }
+                    }
+
+                    else if (currentType === 'cash' && cells.length >= 2) {
+                        // 現金: 名称, 残高, 保有金融機関
+                        const name   = cells[0];
+                        const val    = num(cells[1]);
+                        const broker = cells.length > 2 ? cells[2] : '';
+                        if (val > 0 && name) {
+                            out.cash.push({ name, value: val, broker });
+                        }
+                    }
+                });
+            }
+
+            node = walker.nextNode();
+        }
+
+        return out;
+    }""")
+
+    stocks = result.get("stocks", [])
+    funds  = result.get("funds", [])
+    cash   = result.get("cash", [])
+    cats   = result.get("categories", {})
+
+    print(f"  -> Playwright DOM抽出: 株式={len(stocks)}, 投信={len(funds)}, 現金={len(cash)}")
+    for h in stocks:
+        print(f"     [{h['ticker']}] {h['name']}: {h['value']:,.0f}円 ({h['quantity']}株) @{h['broker']}")
+    for f in funds[:3]:  # 投信は長名称なので先頭3件のみ
+        print(f"     [投信] {f['name'][:40]}: {f['value']:,.0f}円")
+
+    holdings = [
+        {
+            "ticker":        s.get("ticker", ""),
+            "name":          s.get("name", ""),
+            "value":         s.get("value", 0),
+            "quantity":      s.get("quantity", 0),
+            "price":         s.get("price", 0),
+            "gain_loss":     s.get("gain_loss", 0),
+            "gain_loss_pct": s.get("gain_loss_pct", ""),
+            "broker":        s.get("broker", ""),
+        }
+        for s in stocks
+    ]
+    fund_list = [
+        {
+            "name":          f.get("name", ""),
+            "value":         f.get("value", 0),
+            "quantity":      f.get("quantity", 0),
+            "nav":           f.get("nav", 0),
+            "gain_loss":     f.get("gain_loss", 0),
+            "gain_loss_pct": f.get("gain_loss_pct", ""),
+            "broker":        f.get("broker", ""),
+        }
+        for f in funds
+    ]
+
+    total = result.get("total_value", 0)
+    if total == 0:
+        total = sum(cats.values())
+
+    return {
+        "total_value":       total,
+        "cash_jpy":          cats.get("cash", 0),
+        "cash_usd":          0.0,
+        "stock_value":       cats.get("stocks", 0),
+        "fund_value":        cats.get("funds", 0),
+        "real_estate_value": cats.get("real_estate", 0),
+        "holdings":          holdings,
+        "funds":             fund_list,
+        "cash_details":      cash,
+    }
 
 
 # ================================================================
