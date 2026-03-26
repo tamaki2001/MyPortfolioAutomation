@@ -1,0 +1,36 @@
+{
+  "LLY": {
+    "ticker": "LLY",
+    "company": "Eli Lilly",
+    "thesis": "GLP-1受容体作動薬（Mounjaro/Zepbound）の肥満治療市場における圧倒的成長ポテンシャル。NVO（Novo Nordisk）との競争で優位性を維持できるかが鍵。",
+    "key_metrics": [
+      "Mounjaro/Zepbound の売上成長率",
+      "NVO の Wegovy/Ozempic との市場シェア比較",
+      "パイプライン（orforglipron 等の経口GLP-1）の進捗"
+    ],
+    "exit_conditions": [
+      "NVO に市場シェアで大幅に逆転された場合",
+      "GLP-1市場全体の成長鈍化",
+      "重大な安全性問題の発覚"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "競合 NVO との比較を常に意識すること"
+  },
+  "ISRG": {
+    "ticker": "ISRG",
+    "company": "Intuitive Surgical",
+    "thesis": "手術支援ロボット da Vinci の圧倒的市場シェアと、消耗品ビジネスによるリカーリング収益モデル。新規参入者（Medtronic Hugo等）に対するモート（堀）の持続性が鍵。",
+    "key_metrics": [
+      "da Vinci 設置台数の伸び",
+      "手術件数（プロシージャ数）の成長率",
+      "競合ロボット（Hugo, Versius等）のシェア獲得状況"
+    ],
+    "exit_conditions": [
+      "競合にシェアを10%以上奪われた場合",
+      "主要市場での価格競争激化",
+      "規制リスクの顕在化"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "シェア維持が最重要指標"
+  }
+}

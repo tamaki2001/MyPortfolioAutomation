@@ -1,0 +1,24 @@
+# Windows
+desktop.ini
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime artifacts (generated on GitHub Actions, not committed)
+archives/screenshots/*.png
+archives/reports/*.md
+data/history.csv
+
+# Secrets
+.env
+*.json.key

@@ -1,0 +1,74 @@
+name: Monthly Portfolio Analysis
+
+on:
+  schedule:
+    # 毎月28-31日の20:00(JST)に実行（GitHub ActionsはUTC基準のため11:00）
+    - cron: '0 11 28-31 * *'
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: '月末以外でも強制実行する'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  analyze-and-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Install Japanese fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-ipafont-gothic fonts-noto-cjk
+
+      - name: Create required directories
+        run: |
+          mkdir -p data
+          mkdir -p archives/screenshots
+          mkdir -p archives/reports
+
+      - name: Run automation script
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          MF_EMAIL: ${{ secrets.MF_EMAIL }}
+          MF_PASSWORD: ${{ secrets.MF_PASSWORD }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          DRIVE_FOLDER_DATA: ${{ secrets.DRIVE_FOLDER_DATA }}
+          DRIVE_FOLDER_SCREENSHOTS: ${{ secrets.DRIVE_FOLDER_SCREENSHOTS }}
+          DRIVE_FOLDER_REPORTS: ${{ secrets.DRIVE_FOLDER_REPORTS }}
+          FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
+        run: python main.py
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: archives/screenshots/
+          retention-days: 7
