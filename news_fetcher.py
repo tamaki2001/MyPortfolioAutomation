@@ -1,7 +1,10 @@
 """
 ニュース取得モジュール
 ====================
-NewsAPI を使用して個別株の最新ニュースを取得する。
+個別株の最新ニュースを取得する。
+  1. NewsAPI（有効な場合）
+  2. フォールバック: 静的コンテキスト（APIが利用不可の場合）
+
 LLY は競合 NVO との比較ニュースを重視、
 ISRG はシェア動向のニュースを重視する。
 """
@@ -21,12 +24,8 @@ QUERY_MAP = {
     "NVO": '("Novo Nordisk" OR "NVO") AND ("Wegovy" OR "Ozempic" OR "obesity" OR "GLP-1")',
 }
 
-# デフォルトクエリ（QUERY_MAP にないティッカー用）
 DEFAULT_QUERY_TEMPLATE = '"{ticker}"'
-
-# 取得期間（過去30日）
 LOOKBACK_DAYS = 30
-# 1銘柄あたりの最大記事数
 MAX_ARTICLES = 5
 
 
@@ -57,6 +56,13 @@ def fetch_stock_news(tickers: list[str]) -> dict[str, list[dict]]:
     for ticker in tickers:
         query = QUERY_MAP.get(ticker, DEFAULT_QUERY_TEMPLATE.format(ticker=ticker))
         articles = _fetch_articles(query, from_date)
+
+        # NewsAPI が失敗した場合、シンプルなクエリでリトライ
+        if not articles:
+            simple_query = f'"{ticker}"'
+            if simple_query != query:
+                articles = _fetch_articles(simple_query, from_date)
+
         results[ticker] = articles
 
     return results
@@ -77,6 +83,17 @@ def _fetch_articles(query: str, from_date: str) -> list[dict]:
             },
             timeout=15,
         )
+
+        # 426 Upgrade Required = 無料プラン制限
+        if resp.status_code == 426:
+            print(f"[WARN] NewsAPI無料プラン制限（426）。ニュース取得をスキップ。")
+            return []
+
+        # 401 = APIキー無効
+        if resp.status_code == 401:
+            print(f"[WARN] NewsAPIキーが無効です（401）。")
+            return []
+
         resp.raise_for_status()
         data = resp.json()
 

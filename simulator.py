@@ -18,7 +18,19 @@ from pathlib import Path
 
 
 # 日本語フォント設定（GitHub Actions の ubuntu 環境用）
-plt.rcParams["font.family"] = ["IPAexGothic", "Noto Sans CJK JP", "DejaVu Sans"]
+# fonts-noto-cjk パッケージでインストールされるフォント名を優先
+import matplotlib.font_manager as fm
+# フォントキャッシュを再構築
+fm._load_fontmanager(try_read_cache=False)
+# 利用可能な日本語フォントを検索
+_jp_fonts = [f.name for f in fm.fontManager.ttflist
+             if "Noto Sans CJK" in f.name or "IPA" in f.name or "Gothic" in f.name]
+if _jp_fonts:
+    plt.rcParams["font.family"] = [_jp_fonts[0], "DejaVu Sans"]
+    print(f"  [FONT] 日本語フォント使用: {_jp_fonts[0]}")
+else:
+    plt.rcParams["font.family"] = ["DejaVu Sans"]
+    print("  [FONT] 日本語フォントが見つかりません。DejaVu Sans を使用")
 
 
 def run_simulation(

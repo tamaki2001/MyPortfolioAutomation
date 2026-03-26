@@ -79,13 +79,47 @@ def scrape_portfolio(
     Path(screenshot_path).parent.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # ボット検出を回避するためのブラウザ設定
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+            ],
+        )
+
+        # 実ブラウザと同じ User-Agent・ヘッダーを設定
         context = browser.new_context(
             viewport={"width": 1920, "height": 1080},
             locale="ja-JP",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            extra_http_headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "ja,en-US;q=0.7,en;q=0.3",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            },
         )
 
         try:
+            # navigator.webdriver を隠蔽（ボット検出回避）
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
+                // Playwright 検出用のプロパティを除去
+                delete window.__playwright;
+                delete window.__pw_manual;
+            """)
+
             # Cookie 注入
             cookies = _load_cookies()
             _inject_cookies(context, cookies)
