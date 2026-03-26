@@ -88,7 +88,13 @@ class DriveHandler:
 
         results = (
             self.service.files()
-            .list(q=query, fields="files(id, name)", pageSize=5)
+            .list(
+                q=query,
+                fields="files(id, name)",
+                pageSize=5,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
             .execute()
         )
         files = results.get("files", [])
