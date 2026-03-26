@@ -1,35 +1,45 @@
 """
 マネーフォワード ポートフォリオ スクレイパー
 ============================================
-Playwright を使用して MoneyForward ME にログインし、
+Cookie注入方式で MoneyForward ME にアクセスし、
 ポートフォリオページ (https://moneyforward.com/bs/portfolio) の
 スクリーンショット撮影＋HTMLスクレイピングを行う。
+
+認証方式:
+  1. Chrome の Cookie Editor 拡張機能でエクスポートした cookies.json を使用
+  2. GitHub Actions では MF_COOKIES 環境変数 or Google Drive から取得
+  3. アクセス後に更新された Cookie を保存（セッション延長）
 
 特殊ルール:
   VT のうち VT_EXCLUDE_SHARES 株分を
   「株式」から除外し「米ドル現金」として集計し直す。
 
 環境変数:
-  MF_EMAIL    - マネーフォワード ログインメールアドレス
-  MF_PASSWORD - マネーフォワード ログインパスワード
+  MF_COOKIES - Cookie JSON文字列（GitHub Secretsに設定）
 """
 
+import json
 import os
 import re
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright, Page
+from playwright.sync_api import sync_playwright, Page, BrowserContext
 
 
 # マネーフォワード URL
-# メールログインは id.moneyforward.com/sign_in/email に直接アクセスする
-# （moneyforward.com/sign_in → id.moneyforward.com へのリダイレクトを回避）
-MF_LOGIN_URL = "https://id.moneyforward.com/sign_in/email"
 MF_PORTFOLIO_URL = "https://moneyforward.com/bs/portfolio"
 
-# 環境変数から認証情報を取得
-MF_EMAIL = os.environ.get("MF_EMAIL", "")
-MF_PASSWORD = os.environ.get("MF_PASSWORD", "")
+# Cookie ファイルのローカルパス（ローカル実行時）
+COOKIES_FILE = Path(__file__).parent / "cookies.json"
+
+# sameSite 値の正規化マップ（Cookie Editor → Playwright 変換）
+SAMESITE_MAP = {
+    "strict": "Strict",
+    "lax": "Lax",
+    "none": "None",
+    "no_restriction": "None",
+    "unspecified": "Lax",
+}
 
 
 def scrape_portfolio(
@@ -37,19 +47,33 @@ def scrape_portfolio(
     vt_exclude_shares: int = 478,
 ) -> dict:
     """
-    マネーフォワード ME にログインし、ポートフォリオデータを取得する。
+    マネーフォワード ME に Cookie 認証でアクセスし、ポートフォリオデータを取得する。
 
     Returns:
         {
-            "total_value": float,           # 総資産額（円換算）
-            "cash_jpy": float,              # 日本円 預金・現金
-            "cash_usd": float,              # 米ドル換算現金（VT除外分含む）
-            "stock_value": float,           # 株式時価合計（VT除外後）
+            "total_value": float,
+            "cash_jpy": float,
+            "cash_usd": float,
+            "stock_value": float,
+            "fund_value": float,
+            "real_estate_value": float,
             "holdings": [
                 {"ticker": str, "name": str, "value": float,
-                 "quantity": float, "price": float},
+                 "quantity": float, "price": float, "gain_loss": float,
+                 "gain_loss_pct": str, "broker": str},
                 ...
             ],
+            "funds": [
+                {"name": str, "value": float, "quantity": float,
+                 "nav": float, "gain_loss": float, "gain_loss_pct": str,
+                 "broker": str},
+                ...
+            ],
+            "cash_details": [
+                {"name": str, "value": float, "broker": str},
+                ...
+            ],
+            "asset_text": str,  # ページ全文テキスト（レポート生成用）
         }
     """
     Path(screenshot_path).parent.mkdir(parents=True, exist_ok=True)
@@ -60,21 +84,32 @@ def scrape_portfolio(
             viewport={"width": 1920, "height": 1080},
             locale="ja-JP",
         )
-        page = context.new_page()
 
         try:
-            _login(page)
+            # Cookie 注入
+            cookies = _load_cookies()
+            _inject_cookies(context, cookies)
+            page = context.new_page()
+
+            # ポートフォリオページにアクセス
             _navigate_to_portfolio(page)
 
             # スクリーンショット撮影
             page.screenshot(path=screenshot_path, full_page=True)
             print(f"  -> スクリーンショット撮影完了: {screenshot_path}")
 
-            # データ抽出
+            # ページ全文テキスト取得（レポート生成用）
+            asset_text = page.inner_text("body")
+
+            # 構造化データ抽出（JavaScript で DOM を解析）
             raw_data = _extract_portfolio_data(page)
+            raw_data["asset_text"] = asset_text
 
             # VT 特殊ルール適用
             portfolio = _apply_vt_rule(raw_data, vt_exclude_shares)
+
+            # Cookie を更新保存（セッション延長）
+            _save_updated_cookies(context)
 
             return portfolio
 
@@ -84,506 +119,446 @@ def scrape_portfolio(
 
 
 # ================================================================
-# ログイン処理
+# Cookie 管理
 # ================================================================
 
-def _login(page: Page) -> None:
+def _load_cookies() -> list[dict]:
     """
-    マネーフォワード ME にログインする。
+    Cookie を読み込む。
 
-    ログインフロー（id.moneyforward.com）:
-      1. /sign_in/email に直接アクセス（メールログイン画面）
-      2. メールアドレス入力 → submitBtn クリック → 画面遷移
-      3. パスワード入力 → submitBtn クリック → ログイン完了
-    ※ メールとパスワードは別画面で入力する（2段階フォーム）
+    優先順:
+      1. 環境変数 MF_COOKIES（GitHub Actions 用）
+      2. ローカルの cookies.json ファイル
     """
-    if not MF_EMAIL or not MF_PASSWORD:
-        raise EnvironmentError(
-            "環境変数 MF_EMAIL / MF_PASSWORD が設定されていません。"
-        )
+    # 環境変数から（GitHub Actions）
+    cookies_env = os.environ.get("MF_COOKIES", "")
+    if cookies_env:
+        print("  -> Cookie を環境変数 (MF_COOKIES) から読み込み")
+        return json.loads(cookies_env)
 
-    # --- Step 1: メールログインページに直接アクセス ---
-    print("  -> ログインページにアクセス中...")
-    page.goto(MF_LOGIN_URL, wait_until="networkidle")
-    page.wait_for_timeout(5000)
+    # ローカルファイルから
+    if COOKIES_FILE.exists():
+        print(f"  -> Cookie をファイルから読み込み: {COOKIES_FILE}")
+        return json.loads(COOKIES_FILE.read_text(encoding="utf-8"))
 
-    # デバッグ: 現在のURL・ページ状態を出力
-    print(f"  -> 現在のURL: {page.url}")
-
-    # デバッグ: ページのスクリーンショットとHTML構造を保存
-    page.screenshot(path="/tmp/debug_login_page.png")
-    print("  -> デバッグ: ログインページスクリーンショット保存完了")
-
-    # ページ内の全input要素を列挙（デバッグ用）
-    inputs_info = page.evaluate("""() => {
-        const inputs = document.querySelectorAll('input, button, [type="submit"]');
-        return Array.from(inputs).map(el => ({
-            tag: el.tagName,
-            type: el.type || '',
-            name: el.name || '',
-            id: el.id || '',
-            className: el.className || '',
-            placeholder: el.placeholder || '',
-            value: el.value || '',
-            visible: el.offsetParent !== null
-        }));
-    }""")
-    print(f"  -> ページ内のinput/button要素数: {len(inputs_info)}")
-    for info in inputs_info:
-        print(f"     {info}")
-
-    # --- Step 2: メールアドレス入力 ---
-    # 複数のセレクタを順番に試す
-    email_selectors = [
-        'input[name="mfid_user[email]"]',
-        'input[type="email"]',
-        'input[type="text"]',
-        'input[autocomplete="email"]',
-        'input[autocomplete="username"]',
-        'input:not([type="hidden"]):not([type="submit"])',
-    ]
-
-    email_input = None
-    for selector in email_selectors:
-        try:
-            email_input = page.wait_for_selector(selector, timeout=5000)
-            if email_input:
-                print(f"  -> メール入力欄を発見: {selector}")
-                break
-        except Exception:
-            print(f"  -> セレクタ不一致: {selector}")
-            continue
-
-    if not email_input:
-        page.screenshot(path="/tmp/login_failed_no_email_input.png")
-        raise RuntimeError(
-            f"メールアドレス入力欄が見つかりません。"
-            f"現在のURL: {page.url} / "
-            f"ページ内要素: {inputs_info}"
-        )
-    email_input.fill(MF_EMAIL)
-    print("  -> メールアドレス入力完了")
-
-    # 「ログインする」ボタン（class="submitBtn"）
-    submit_btn = page.wait_for_selector(
-        '.submitBtn, '
-        'input[type="submit"], '
-        'button[type="submit"]',
-        timeout=10000,
+    raise FileNotFoundError(
+        "Cookie が見つかりません。\n"
+        "以下のいずれかを設定してください:\n"
+        "  1. 環境変数 MF_COOKIES に Cookie JSON を設定\n"
+        "  2. cookies.json ファイルをプロジェクトルートに配置\n"
+        "\n"
+        "Cookie の取得方法:\n"
+        "  1. Chrome に Cookie Editor 拡張機能をインストール\n"
+        "  2. MoneyForward にログインした状態で bs/portfolio を開く\n"
+        "  3. Cookie Editor の Export ボタンでコピー\n"
+        "  4. cookies.json に貼り付けて保存"
     )
-    submit_btn.click()
-    print("  -> メールアドレス送信、パスワード画面を待機中...")
 
-    # パスワード画面への遷移を待つ
-    page.wait_for_load_state("domcontentloaded")
-    page.wait_for_timeout(3000)
 
-    # --- Step 3: パスワード入力（別画面） ---
-    password_input = page.wait_for_selector(
-        'input[name="mfid_user[password]"]',
-        timeout=15000,
-    )
-    if not password_input:
-        password_input = page.wait_for_selector(
-            'input[type="password"]',
-            timeout=10000,
+def _inject_cookies(context: BrowserContext, raw_cookies: list[dict]) -> None:
+    """
+    Cookie を Playwright コンテキストに注入する。
+    Cookie Editor のエクスポート形式を Playwright 形式に変換。
+    """
+    cookies = []
+    for c in raw_cookies:
+        # sameSite を Playwright 形式に正規化
+        same = c.get("sameSite", "")
+        c["sameSite"] = SAMESITE_MAP.get(str(same).lower(), "Lax")
+
+        # Playwright が受け付けないフィールドを除去
+        for key in ["hostOnly", "session", "storeId", "id"]:
+            c.pop(key, None)
+
+        cookies.append(c)
+
+    context.add_cookies(cookies)
+    print(f"  -> {len(cookies)} 件の Cookie を注入完了")
+
+
+def _save_updated_cookies(context: BrowserContext) -> None:
+    """アクセス後の更新済み Cookie を保存する（セッション延長用）。"""
+    try:
+        updated = context.cookies()
+        # ローカルファイルに保存
+        COOKIES_FILE.write_text(
+            json.dumps(updated, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
-    password_input.fill(MF_PASSWORD)
-    print("  -> パスワード入力完了")
+        print(f"  -> 更新済み Cookie を保存: {COOKIES_FILE}")
+    except Exception as e:
+        print(f"  -> Cookie 保存スキップ（GitHub Actions では正常）: {e}")
 
-    # 「ログインする」ボタン
-    login_btn = page.wait_for_selector(
-        '.submitBtn, '
-        'input[type="submit"], '
-        'button[type="submit"]',
-        timeout=10000,
-    )
-    login_btn.click()
 
-    # ログイン完了を待つ（moneyforward.com にリダイレクトされるまで）
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(5000)
-
-    # デバッグ: ログイン後のURL
-    print(f"  -> ログイン後のURL: {page.url}")
-
-    # ログイン成功確認
-    # id.moneyforward.com の sign_in ページに留まっている場合は失敗
-    if "sign_in" in page.url and "id.moneyforward.com" in page.url:
-        # スクリーンショットを撮ってデバッグ用に保存
-        page.screenshot(path="/tmp/login_failed.png")
-        raise RuntimeError(
-            f"マネーフォワードへのログインに失敗しました。"
-            f"現在のURL: {page.url} / "
-            f"認証情報を確認してください。"
-        )
-    print("  -> マネーフォワード ログイン成功")
-
+# ================================================================
+# ページナビゲーション
+# ================================================================
 
 def _navigate_to_portfolio(page: Page) -> None:
-    """ポートフォリオページ (/bs/portfolio) に遷移する。"""
-    page.goto(MF_PORTFOLIO_URL, wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    """
+    ポートフォリオページにアクセスし、正常表示を確認する。
+    ログインページにリダイレクトされた場合はエラー。
+    """
+    print("  -> ポートフォリオページにアクセス中...")
+    page.goto(MF_PORTFOLIO_URL, wait_until="networkidle", timeout=60000)
+    page.wait_for_load_state("networkidle", timeout=30000)
     page.wait_for_timeout(3000)
 
-    # ページが正しく読み込まれたか確認
-    if "/bs/portfolio" not in page.url:
+    current_url = page.url
+    print(f"  -> 現在の URL: {current_url}")
+
+    # ログインページにリダイレクトされた場合
+    if any(k in current_url for k in ["sign_in", "login", "users/sign_in"]):
+        page.screenshot(path="/tmp/login_failed.png")
         raise RuntimeError(
-            f"ポートフォリオページへの遷移に失敗しました。"
-            f"現在のURL: {page.url}"
+            "ログインセッションが切れています。\n"
+            "Cookie を再エクスポートしてください。\n"
+            f"リダイレクト先: {current_url}"
         )
+
+    # ポートフォリオページが正しく表示されているか
+    if "/bs/portfolio" not in current_url:
+        page.screenshot(path="/tmp/unexpected_page.png")
+        raise RuntimeError(
+            f"予期しないページにリダイレクトされました: {current_url}"
+        )
+
     print("  -> ポートフォリオページ表示完了")
 
 
 # ================================================================
-# データ抽出
+# データ抽出（実際のマネーフォワード DOM 構造に基づく）
 # ================================================================
 
 def _extract_portfolio_data(page: Page) -> dict:
     """
-    マネーフォワードのポートフォリオページからデータを抽出する。
+    ポートフォリオページから全データを JavaScript で構造的に抽出する。
 
-    ページ構造 (2024-2026年時点の典型的なレイアウト):
-      - 資産総額が上部に表示
-      - 資産クラスごとのセクション（株式・投信、預金・現金 等）
-      - 各セクション内にテーブルで銘柄一覧
-
-    セクション例:
-      - 株式（現物）/ 投資信託
-      - 預金・現金・暗号資産
-      - 年金
-      - ポイント
+    マネーフォワード ME のポートフォリオページ構造（2026年3月時点）:
+      - 資産総額：h2 の隣に表示
+      - 「資産の内訳」テーブル: 各カテゴリの合計と割合
+      - 各カテゴリセクション:
+        - 「預金・現金・暗号資産」: heading + 合計 + 明細テーブル
+        - 「株式（現物）」: heading + 合計 + 銘柄テーブル（コード付き）
+        - 「投資信託」: heading + 合計 + 銘柄テーブル
+        - 「不動産」: heading + 合計 + 物件テーブル
+        - 「ポイント・マイル」: heading + 合計 + 明細テーブル
     """
+    data = page.evaluate("""() => {
+        // ユーティリティ: テキストから数値を抽出
+        function parseNum(text) {
+            if (!text) return 0;
+            const cleaned = text.replace(/円/g, '').replace(/¥/g, '')
+                               .replace(/,/g, '').replace(/\\s/g, '').trim();
+            const m = cleaned.match(/-?[\\d]+\\.?\\d*/);
+            return m ? parseFloat(m[0]) : 0;
+        }
+
+        // ユーティリティ: % テキストをそのまま返す
+        function parsePct(text) {
+            if (!text) return '';
+            const m = text.match(/-?[\\d.]+%/);
+            return m ? m[0] : text.trim();
+        }
+
+        const result = {
+            total_value: 0,
+            categories: {},
+            stocks: [],
+            funds: [],
+            cash_details: [],
+            real_estate: [],
+        };
+
+        // --- 資産総額 ---
+        // "資産総額： XXX円" のテキストを探す
+        const allText = document.body.innerText;
+        const totalMatch = allText.match(/資産総額[：:]+\\s*([\\d,]+)円/);
+        if (totalMatch) {
+            result.total_value = parseNum(totalMatch[1]);
+        }
+
+        // --- セクションを region 要素で走査 ---
+        const regions = document.querySelectorAll('section, div[class*="bs-"]');
+
+        // --- 全 heading（h2, h3）からセクションを特定 ---
+        const headings = document.querySelectorAll('h2, h3');
+        headings.forEach(h => {
+            const text = h.innerText.trim();
+
+            // 合計金額のパターン: "合計：XXX円"
+            const sumMatch = text.match(/合計[：:]([\\d,]+)円/);
+
+            if (text.includes('預金') || text.includes('現金')) {
+                if (sumMatch) result.categories['cash'] = parseNum(sumMatch[1]);
+
+                // 現金明細テーブルを取得
+                const section = h.closest('section, div[class*="region"], [role="region"]')
+                                || h.parentElement?.parentElement;
+                if (section) {
+                    const table = section.querySelector('table');
+                    if (table) {
+                        const rows = table.querySelectorAll('tr');
+                        // ヘッダー行以外を処理
+                        // 現金テーブル: 種類・名称 | 金額 | 保有金融機関
+                        for (let i = 0; i < rows.length; i++) {
+                            const cells = rows[i].querySelectorAll('td');
+                            if (cells.length >= 2) {
+                                const name = cells[0]?.innerText?.trim() || '';
+                                const value = parseNum(cells[1]?.innerText || '0');
+                                const broker = cells[2]?.innerText?.trim() || '';
+                                if (name && value > 0) {
+                                    result.cash_details.push({
+                                        name: name, value: value, broker: broker
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (text.includes('株式') && text.includes('現物')) {
+                if (sumMatch) result.categories['stocks'] = parseNum(sumMatch[1]);
+
+                // 株式テーブルを取得
+                const section = h.closest('section, div[class*="region"], [role="region"]')
+                                || h.parentElement?.parentElement;
+                if (section) {
+                    const table = section.querySelector('table');
+                    if (table) {
+                        const rows = table.querySelectorAll('tr');
+                        // 株式テーブル: 銘柄コード | 銘柄名 | 保有数 | 平均取得単価 | 現在値 | 評価額 | 前日比 | 評価損益 | 評価損益率 | 保有金融機関
+                        for (let i = 0; i < rows.length; i++) {
+                            const cells = rows[i].querySelectorAll('td');
+                            if (cells.length >= 6) {
+                                // テーブル列のインデックス
+                                let idx = 0;
+                                const ticker = cells[idx++]?.innerText?.trim() || '';
+                                const name = cells[idx++]?.innerText?.trim() || '';
+                                const quantity = parseNum(cells[idx++]?.innerText);
+                                const avgCost = parseNum(cells[idx++]?.innerText);
+                                const curPrice = parseNum(cells[idx++]?.innerText);
+                                const evalValue = parseNum(cells[idx++]?.innerText);
+                                const dayChange = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
+                                const gainLoss = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
+                                const gainLossPct = idx < cells.length ? parsePct(cells[idx++]?.innerText) : '';
+                                const broker = idx < cells.length ? cells[idx++]?.innerText?.trim() : '';
+
+                                if (name && evalValue > 0) {
+                                    result.stocks.push({
+                                        ticker, name, quantity, avgCost, curPrice,
+                                        value: evalValue, dayChange, gainLoss, gainLossPct, broker
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (text.includes('投資信託') && !text.includes('外国')) {
+                if (sumMatch) result.categories['funds'] = parseNum(sumMatch[1]);
+
+                // 投信テーブルを取得
+                const section = h.closest('section, div[class*="region"], [role="region"]')
+                                || h.parentElement?.parentElement;
+                if (section) {
+                    const table = section.querySelector('table');
+                    if (table) {
+                        const rows = table.querySelectorAll('tr');
+                        // 投資信託テーブル: 銘柄名 | 保有数 | 平均取得単価 | 基準価額 | 評価額 | 前日比 | 評価損益 | 評価損益率 | 保有金融機関
+                        for (let i = 0; i < rows.length; i++) {
+                            const cells = rows[i].querySelectorAll('td');
+                            if (cells.length >= 5) {
+                                let idx = 0;
+                                const name = cells[idx++]?.innerText?.trim() || '';
+                                const quantity = parseNum(cells[idx++]?.innerText);
+                                const avgCost = parseNum(cells[idx++]?.innerText);
+                                const nav = parseNum(cells[idx++]?.innerText);
+                                const evalValue = parseNum(cells[idx++]?.innerText);
+                                const dayChange = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
+                                const gainLoss = idx < cells.length ? parseNum(cells[idx++]?.innerText) : 0;
+                                const gainLossPct = idx < cells.length ? parsePct(cells[idx++]?.innerText) : '';
+                                const broker = idx < cells.length ? cells[idx++]?.innerText?.trim() : '';
+
+                                if (name && evalValue > 0) {
+                                    result.funds.push({
+                                        name, quantity, avgCost, nav,
+                                        value: evalValue, dayChange, gainLoss, gainLossPct, broker
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (text.includes('不動産')) {
+                if (sumMatch) result.categories['real_estate'] = parseNum(sumMatch[1]);
+            }
+
+            if (text.includes('ポイント') || text.includes('マイル')) {
+                if (sumMatch) result.categories['points'] = parseNum(sumMatch[1]);
+            }
+        });
+
+        return result;
+    }""")
+
+    print(f"  -> 抽出結果: 総資産={data.get('total_value', 0):,.0f}円")
+    print(f"     カテゴリ: {data.get('categories', {})}")
+    print(f"     株式銘柄数: {len(data.get('stocks', []))}")
+    print(f"     投信銘柄数: {len(data.get('funds', []))}")
+    print(f"     現金明細数: {len(data.get('cash_details', []))}")
+
+    # 構造化データを返却形式に変換
     holdings = []
+    for s in data.get("stocks", []):
+        holdings.append({
+            "ticker": s.get("ticker", ""),
+            "name": s.get("name", ""),
+            "value": s.get("value", 0),
+            "quantity": s.get("quantity", 0),
+            "price": s.get("curPrice", 0),
+            "gain_loss": s.get("gainLoss", 0),
+            "gain_loss_pct": s.get("gainLossPct", ""),
+            "broker": s.get("broker", ""),
+        })
 
-    # --- 全テーブルから保有銘柄を抽出 ---
-    # マネーフォワードのポートフォリオは section ごとにテーブルがある
-    tables = page.query_selector_all("table.table-bordered, table.table-striped, table")
+    funds = []
+    for f in data.get("funds", []):
+        funds.append({
+            "name": f.get("name", ""),
+            "value": f.get("value", 0),
+            "quantity": f.get("quantity", 0),
+            "nav": f.get("nav", 0),
+            "gain_loss": f.get("gainLoss", 0),
+            "gain_loss_pct": f.get("gainLossPct", ""),
+            "broker": f.get("broker", ""),
+        })
 
-    for table in tables:
-        rows = table.query_selector_all("tbody tr")
-        for row in rows:
-            holding = _parse_mf_holding_row(row)
-            if holding:
-                holdings.append(holding)
+    cash_details = data.get("cash_details", [])
+    categories = data.get("categories", {})
 
-    # テーブルから取得できなかった場合、別のセレクタを試す
-    if not holdings:
-        holdings = _extract_holdings_fallback(page)
+    cash_jpy = categories.get("cash", 0)
+    stock_value = categories.get("stocks", 0)
+    fund_value = categories.get("funds", 0)
+    real_estate_value = categories.get("real_estate", 0)
+    total_value = data.get("total_value", 0)
 
-    # --- 現金・預金 抽出 ---
-    cash_jpy = _extract_cash_deposits(page)
-    cash_usd = 0.0  # マネーフォワードでは外貨は個別に抽出
-
-    # --- 株式合計 ---
-    stock_value = sum(h["value"] for h in holdings)
-
-    # --- 総資産はページ上部から取得を試みる ---
-    total_from_page = _extract_total_assets(page)
-    total_value = total_from_page if total_from_page > 0 else (stock_value + cash_jpy)
+    # 合計が取れなかった場合は個別の合計から
+    if total_value == 0:
+        total_value = cash_jpy + stock_value + fund_value + real_estate_value
 
     return {
         "total_value": total_value,
         "cash_jpy": cash_jpy,
-        "cash_usd": cash_usd,
+        "cash_usd": 0.0,  # VT ルール適用後に設定
         "stock_value": stock_value,
+        "fund_value": fund_value,
+        "real_estate_value": real_estate_value,
         "holdings": holdings,
+        "funds": funds,
+        "cash_details": cash_details,
     }
 
 
-def _parse_mf_holding_row(row) -> dict | None:
+# ================================================================
+# VT 特殊ルール
+# ================================================================
+
+def _apply_vt_rule(raw_data: dict, vt_exclude_shares: int) -> dict:
     """
-    マネーフォワードの保有銘柄テーブル行をパースする。
+    VT特殊ルール:
+      VT（バンガード トータル ワールド ストックETF）のうち、
+      指定株数分（478株）を株式から除外し、米ドル現金として再集計する。
 
-    典型的なカラム構成:
-      銘柄名 | 保有数 | 取得単価 | 現在値 | 評価額 | 損益 | 損益率
-    ※カラム数・順序はセクションにより異なる場合がある
+      具体的な処理:
+        - VT の保有が複数口座にある場合、478株を含む口座から差し引く
+        - 差し引いた分の評価額を cash_usd に加算
     """
-    cells = row.query_selector_all("td")
-    if len(cells) < 3:
-        return None
+    holdings = raw_data["holdings"]
+    adjusted_holdings = []
+    vt_adjustment = 0.0
+    remaining_exclude = vt_exclude_shares
 
-    try:
-        # 最初のセルは銘柄名（リンクを含む場合がある）
-        name_elem = cells[0].query_selector("a") or cells[0]
-        name_text = (name_elem.inner_text() or "").strip()
-        if not name_text:
-            return None
+    # VT の保有を数量降順でソート（最大保有口座から優先除外）
+    vt_holdings = [(i, h) for i, h in enumerate(holdings)
+                   if "VT" in h.get("ticker", "").upper()
+                   or "バンガード トータル ワールド" in h.get("name", "")]
+    vt_holdings.sort(key=lambda x: x[1].get("quantity", 0), reverse=True)
 
-        # 数値セルを右から走査して評価額を特定
-        # マネーフォワードでは「評価額」が最も重要
-        values = []
-        for cell in cells[1:]:
-            text = cell.inner_text().strip()
-            num = _parse_number(text)
-            values.append(num)
+    excluded_indices = set()
 
-        if not values:
-            return None
+    for idx, h in vt_holdings:
+        if remaining_exclude <= 0:
+            break
 
-        # ティッカー抽出
-        ticker = _extract_ticker(name_text)
+        qty = h.get("quantity", 0)
+        if qty <= 0:
+            continue
 
-        # 評価額の推定: 通常、数値が大きいものが評価額
-        # ヒューリスティック: 値が最大のものを評価額とする
-        # ただし、保有数（小さい数値）と評価額（大きい数値）を区別
-        quantity = 0.0
-        price = 0.0
-        value = 0.0
+        price_per_share = h["value"] / qty if qty > 0 else 0
 
-        if len(values) >= 4:
-            # 保有数, 取得単価, 現在値, 評価額 ... のパターン
-            quantity = values[0]
-            price = values[2] if values[2] > 0 else values[1]
-            # 評価額は通常3番目か4番目の大きな数値
-            value = values[3] if len(values) > 3 and values[3] > values[0] else max(values[1:])
-        elif len(values) >= 2:
-            quantity = values[0]
-            value = values[-1]
-        elif len(values) == 1:
-            value = values[0]
-
-        # 評価額が0以下なら無視
-        if value <= 0:
-            return None
-
-        # 明らかに金額でない小さい値（損益率等）をフィルタ
-        if value < 100:
-            return None
-
-        return {
-            "ticker": ticker,
-            "name": name_text,
-            "value": value,
-            "quantity": quantity,
-            "price": price,
-        }
-
-    except (ValueError, IndexError):
-        return None
-
-
-def _extract_holdings_fallback(page: Page) -> list[dict]:
-    """
-    テーブルから取得できなかった場合のフォールバック。
-    マネーフォワードのポートフォリオセクション内の
-    個別要素を直接探索する。
-    """
-    holdings = []
-
-    # セクションごとの保有銘柄リスト
-    sections = page.query_selector_all(
-        "section.bs-portfolio, "
-        "div.portfolio-section, "
-        "div[class*='portfolio'], "
-        "div[class*='holding']"
-    )
-
-    for section in sections:
-        items = section.query_selector_all(
-            "div.portfolio-item, "
-            "li.holding-item, "
-            "tr"
-        )
-        for item in items:
-            name_el = item.query_selector(
-                "a, span.name, div.name, td:first-child"
+        if qty <= remaining_exclude:
+            # この口座の VT を全て除外
+            exclude_value = h["value"]
+            vt_adjustment += exclude_value
+            remaining_exclude -= qty
+            excluded_indices.add(idx)
+            print(
+                f"  -> VT特殊ルール: {qty:.0f}株全て "
+                f"({exclude_value:,.0f}円) を米ドル現金へ振替"
             )
-            value_el = item.query_selector(
-                "span.value, span.amount, "
-                "td:last-child, span[class*='price']"
+        else:
+            # 一部除外
+            exclude_value = price_per_share * remaining_exclude
+            vt_adjustment += exclude_value
+            adjusted_h = {
+                **h,
+                "quantity": qty - remaining_exclude,
+                "value": h["value"] - exclude_value,
+            }
+            holdings[idx] = adjusted_h
+            remaining_exclude = 0
+            print(
+                f"  -> VT特殊ルール: {vt_exclude_shares}株 "
+                f"({exclude_value:,.0f}円) を米ドル現金へ振替 "
+                f"（残: {adjusted_h['quantity']:.0f}株）"
             )
-            if name_el and value_el:
-                name = name_el.inner_text().strip()
-                value = _parse_number(value_el.inner_text())
-                if name and value > 100:
-                    holdings.append({
-                        "ticker": _extract_ticker(name),
-                        "name": name,
-                        "value": value,
-                        "quantity": 0,
-                        "price": 0,
-                    })
 
-    return holdings
+    # 除外された VT を holdings から削除
+    adjusted_holdings = [h for i, h in enumerate(holdings) if i not in excluded_indices]
 
+    stock_value = raw_data["stock_value"] - vt_adjustment
+    cash_usd = raw_data.get("cash_usd", 0) + vt_adjustment
 
-def _extract_total_assets(page: Page) -> float:
-    """
-    ページ上部の総資産額を抽出する。
-    マネーフォワードのポートフォリオページ上部に表示される数値。
-    """
-    selectors = [
-        "div.heading-radius-box h1",
-        "div.total-assets",
-        "span.total-amount",
-        "div.bs-total-assets",
-        "h1.heading-small",
-        # 「資産総額」ラベルの隣の数値
-        "div.heading-radius-box",
-    ]
+    result = {
+        **raw_data,
+        "stock_value": stock_value,
+        "cash_usd": cash_usd,
+        "holdings": adjusted_holdings,
+    }
 
-    for selector in selectors:
-        elem = page.query_selector(selector)
-        if elem:
-            text = elem.inner_text()
-            value = _parse_number(text)
-            if value > 10000:  # 1万円以上なら妥当
-                return value
-
-    return 0.0
-
-
-def _extract_cash_deposits(page: Page) -> float:
-    """
-    預金・現金カテゴリの合計額を抽出する。
-
-    マネーフォワードのポートフォリオページでは
-    「預金・現金・暗号資産」セクションに現金残高が表示される。
-    """
-    # セクションヘッダーから「預金」セクションを特定
-    headers = page.query_selector_all(
-        "h2, h3, div.heading, "
-        "section header, th"
-    )
-
-    for header in headers:
-        text = header.inner_text().strip()
-        if "預金" in text or "現金" in text:
-            # ヘッダーと同じ行、または隣接する要素から金額を取得
-            parent = header.query_selector("xpath=..")
-            if parent:
-                # 金額要素を探す
-                amount_el = parent.query_selector(
-                    "span.amount, span.value, td + td"
-                )
-                if amount_el:
-                    return _parse_number(amount_el.inner_text())
-
-                # ヘッダーテキスト内に金額がある場合
-                val = _parse_number(text)
-                if val > 10000:
-                    return val
-
-    # フォールバック: テーブルから「預金」行を探す
-    rows = page.query_selector_all("tr")
-    for row in rows:
-        row_text = row.inner_text()
-        if "預金" in row_text or "普通預金" in row_text or "現金" in row_text:
-            cells = row.query_selector_all("td")
-            for cell in reversed(cells):
-                val = _parse_number(cell.inner_text())
-                if val > 10000:
-                    return val
-
-    return 0.0
+    # total は再計算しない（マネーフォワードの総資産をそのまま使用）
+    return result
 
 
 # ================================================================
-# ヘルパー関数
+# ヘルパー
 # ================================================================
-
-def _extract_ticker(text: str) -> str:
-    """
-    銘柄名テキストからティッカーシンボルを抽出する。
-
-    マネーフォワードの銘柄名パターン例:
-      - "バンガード トータル ワールド ストックETF (VT)"
-      - "イーライリリー (LLY)"
-      - "インテュイティヴ・サージカル (ISRG)"
-      - "eMAXIS Slim 全世界株式（オール・カントリー）"
-      - "三菱UFJフィナンシャル・グループ (8306)"
-    """
-    # 括弧内の英字ティッカーを探す: (VT), [LLY] など
-    match = re.search(r"[(\[（]([A-Z]{1,5})[)\]）]", text)
-    if match:
-        return match.group(1)
-
-    # 括弧内の数字コード（日本株）: (8306) など
-    match = re.search(r"[(\[（](\d{4,5})[)\]）]", text)
-    if match:
-        return match.group(1)
-
-    # テキスト内の独立した英字列
-    match = re.search(r"\b([A-Z]{1,5})\b", text)
-    if match:
-        return match.group(1)
-
-    # 投資信託などティッカーがない場合は名前の先頭部分
-    # 長い名前は短縮
-    short = text[:20].strip()
-    return short
-
 
 def _parse_number(text: str) -> float:
-    """
-    テキストから数値を抽出する。
-
-    マネーフォワードの数値表記:
-      - "1,234,567円"
-      - "¥1,234,567"
-      - "-12,345"
-      - "1,234.56"
-      - "12,345 円"
-    """
+    """テキストから数値を抽出する。"""
     if not text:
         return 0.0
-
-    # 「円」「¥」「$」を除去し、カンマも除去
     cleaned = text.replace("円", "").replace("¥", "").replace("$", "")
     cleaned = cleaned.replace(",", "").replace(" ", "").strip()
-
-    # 数値部分のみ抽出（マイナス記号と小数点を許容）
     match = re.search(r"-?[\d]+\.?\d*", cleaned)
     if match:
         try:
             return float(match.group())
         except ValueError:
             return 0.0
-
     return 0.0
-
-
-def _apply_vt_rule(raw_data: dict, vt_exclude_shares: int) -> dict:
-    """
-    VT特殊ルール:
-      VT の指定株数分を株式から除外し、米ドル現金として再集計する。
-
-      VT の1株あたり単価 × 除外株数分を:
-        - holdings の VT の value / quantity から差し引く
-        - cash_usd に加算する
-    """
-    holdings = raw_data["holdings"]
-    adjusted_holdings = []
-    vt_adjustment = 0.0
-
-    for h in holdings:
-        if h["ticker"] == "VT" and h["quantity"] > vt_exclude_shares:
-            # 1株あたり単価
-            price_per_share = h["value"] / h["quantity"] if h["quantity"] > 0 else 0
-            exclude_value = price_per_share * vt_exclude_shares
-
-            adjusted = {
-                **h,
-                "quantity": h["quantity"] - vt_exclude_shares,
-                "value": h["value"] - exclude_value,
-            }
-            adjusted_holdings.append(adjusted)
-            vt_adjustment = exclude_value
-            print(
-                f"  -> VT特殊ルール適用: {vt_exclude_shares}株 "
-                f"({exclude_value:,.0f}円) を米ドル現金へ振替"
-            )
-        else:
-            adjusted_holdings.append(h)
-
-    stock_value = sum(h["value"] for h in adjusted_holdings)
-    cash_usd = raw_data["cash_usd"] + vt_adjustment
-
-    return {
-        "total_value": stock_value + raw_data["cash_jpy"] + cash_usd,
-        "cash_jpy": raw_data["cash_jpy"],
-        "cash_usd": cash_usd,
-        "stock_value": stock_value,
-        "holdings": adjusted_holdings,
-    }

@@ -54,8 +54,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
-          MF_EMAIL: ${{ secrets.MF_EMAIL }}
-          MF_PASSWORD: ${{ secrets.MF_PASSWORD }}
+          MF_COOKIES: ${{ secrets.MF_COOKIES }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}

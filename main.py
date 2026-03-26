@@ -24,7 +24,7 @@ from pathlib import Path
 
 # --- モジュールインポート ---
 from drive_handler import DriveHandler
-from scraper import scrape_portfolio
+from scraper import scrape_portfolio  # Cookie注入方式（MF_COOKIES環境変数 or cookies.json）
 from news_fetcher import fetch_stock_news
 from simulator import run_simulation, generate_charts
 from report_generator import generate_report
