@@ -17,7 +17,9 @@ venv/
 # Runtime artifacts (generated on GitHub Actions, not committed)
 archives/screenshots/*.png
 archives/reports/*.md
-data/history.csv
+
+# history.csv は Git で管理する（Drive アップロード不要）
+# data/history.csv  ← コメントアウト：リポジトリで履歴管理する
 
 # Secrets
 .env

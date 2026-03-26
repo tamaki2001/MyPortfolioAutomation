@@ -18,6 +18,9 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+permissions:
+  contents: write   # history.csv を git push するために必要
+
 jobs:
   analyze-and-report:
     runs-on: ubuntu-latest
@@ -63,6 +66,15 @@ jobs:
           DRIVE_FOLDER_REPORTS: ${{ secrets.DRIVE_FOLDER_REPORTS }}
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: python main.py
+
+      - name: Save history.csv to repository
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/history.csv
+          git diff --staged --quiet && echo "history.csv に変更なし" || \
+            git commit -m "chore: 月次データ更新 $(date +%Y%m%d)" && git push
 
       - name: Upload report artifacts
         if: always()
