@@ -76,6 +76,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/history.csv
           git add archives/reports/*.md 2>/dev/null || true
+          git add archives/screenshots/*.png 2>/dev/null || true
           git diff --staged --quiet && echo "変更なし" || \
             git commit -m "chore: 月次データ更新 $(date +%Y%m%d)" && git push
 

@@ -14,11 +14,11 @@ venv/
 .vscode/
 .idea/
 
-# スクリーンショット・グラフはサイズが大きいため Git 管理外
-archives/screenshots/*.png
+# スクリーンショット・グラフも Git で履歴管理する
+# archives/screenshots/*.png
 
-# レポートは Git で管理する（history.csv と同様）
-# archives/reports/*.md  ← コメントアウト：リポジトリで履歴管理する
+# レポートも Git で管理する
+# archives/reports/*.md
 
 # history.csv は Git で管理する（Drive アップロード不要）
 # data/history.csv  ← コメントアウト：リポジトリで履歴管理する
