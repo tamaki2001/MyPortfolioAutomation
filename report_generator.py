@@ -52,11 +52,17 @@ def generate_report(
     now = datetime.now()
     template = template.replace("{year}", str(now.year)).replace("{month}", str(now.month))
 
+    # --- stock_stories を dict としてパース（マッピング用）---
+    try:
+        stories_dict = json.loads(stock_stories)
+    except Exception:
+        stories_dict = {}
+
     # --- シミュレーション結果の要約 ---
     sim_summary = _summarize_simulation(sim_result)
 
     # --- ニュースの要約 ---
-    news_summary = _summarize_news(news)
+    news_summary = _summarize_news(news, stories_dict)
 
     # --- プロンプト構築 ---
     system_prompt = _build_system_prompt(financial_policy, stock_stories)
@@ -65,6 +71,7 @@ def generate_report(
         portfolio_data=portfolio_data,
         sim_summary=sim_summary,
         news_summary=news_summary,
+        stories_dict=stories_dict,
         report_date=now,
     )
 
@@ -118,6 +125,7 @@ def _build_user_prompt(
     portfolio_data: dict,
     sim_summary: str,
     news_summary: str,
+    stories_dict: dict | None = None,
     report_date: "datetime | None" = None,
 ) -> str:
     """Claude API の user プロンプトを構築する。"""
@@ -126,6 +134,9 @@ def _build_user_prompt(
     if report_date is None:
         report_date = datetime.now()
     date_str = f"{report_date.year}年{report_date.month}月"
+
+    # --- 銘柄名⇔ストーリーキーのマッピング表 ---
+    mapping_text = _build_ticker_mapping(portfolio_data, stories_dict or {})
 
     return f"""今日の日付: {report_date.strftime('%Y年%m月%d日')}
 以下のデータに基づき、テンプレートに従って月次レポートを作成してください。
@@ -143,15 +154,18 @@ def _build_user_prompt(
 ### 保有銘柄
 {holdings_text}
 
+{mapping_text}
+
 ## 資産寿命シミュレーション結果
 {sim_summary}
 
-## 最新ニュース
+## 最新ニュース（各銘柄の投資仮説検証用）
 {news_summary}
 
 ---
 **重要**: 「Ultra C」として、個別株のストーリー乖離を必ず検証し、
-浅野様の「知識での武装」に対する鋭い問いかけをレポートに含めてください。"""
+浅野様の「知識での武装」に対する鋭い問いかけをレポートに含めてください。
+上記「銘柄名⇔ストーリーキー対応表」を使い、ポートフォリオの全銘柄（インデックスファンドを含む）を分析してください。"""
 
 
 # ================================================================
@@ -178,11 +192,19 @@ def _summarize_simulation(sim_result: dict) -> str:
     return "\n".join(lines)
 
 
-def _summarize_news(news: dict[str, list[dict]]) -> str:
-    """ニュースをテキストに要約する。"""
+def _summarize_news(news: dict[str, list[dict]], stories_dict: dict | None = None) -> str:
+    """ニュースをテキストに要約する。stories_dict があれば product_name を見出しに使用する。"""
+    stories = stories_dict or {}
     lines = []
     for ticker, articles in news.items():
-        lines.append(f"\n### {ticker}")
+        # 見出し: product_name があれば使い、ストーリーキーも併記
+        story = stories.get(ticker, {})
+        product_name = story.get("product_name") or story.get("company", "")
+        if product_name and product_name != ticker:
+            header = f"{product_name}（ストーリーキー: {ticker}）"
+        else:
+            header = ticker
+        lines.append(f"\n### {header}")
         if not articles:
             lines.append("  - 該当ニュースなし")
             continue
@@ -190,6 +212,25 @@ def _summarize_news(news: dict[str, list[dict]]) -> str:
             lines.append(f"  - [{a['source']}] {a['title']}")
             if a["description"]:
                 lines.append(f"    {a['description'][:150]}")
+    return "\n".join(lines)
+
+
+def _build_ticker_mapping(portfolio_data: dict, stories_dict: dict) -> str:
+    """
+    ポートフォリオ銘柄名 ⇔ stock_stories キーの対応表を生成する。
+    投資信託など名称が異なる銘柄の照合をClaudeが行えるようにする。
+    """
+    if not stories_dict:
+        return ""
+
+    lines = ["### 銘柄名⇔ストーリーキー対応表（分析時に参照してください）"]
+    for story_key, story in stories_dict.items():
+        product_name = story.get("product_name") or story.get("company", "")
+        asset_type = story.get("asset_type", "")
+        if product_name:
+            lines.append(f"  - ストーリーキー `{story_key}` = {product_name}（{asset_type}）")
+        else:
+            lines.append(f"  - ストーリーキー `{story_key}`（{asset_type}）")
     return "\n".join(lines)
 
 
