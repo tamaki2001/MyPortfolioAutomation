@@ -7,17 +7,23 @@ Google Drive API を使用して以下を行う:
   - history.csv への行追記
   - history.csv の DataFrame 読込
 
-認証: GOOGLE_DRIVE_CREDENTIALS 環境変数に
-      サービスアカウント JSON キーの内容を設定する。
+認証: OAuth2 リフレッシュトークン方式（無料・ユーザーの Drive クォータを使用）
+  環境変数:
+    GOOGLE_OAUTH_CLIENT_ID       ... OAuth2 クライアント ID
+    GOOGLE_OAUTH_CLIENT_SECRET   ... OAuth2 クライアント シークレット
+    GOOGLE_OAUTH_REFRESH_TOKEN   ... リフレッシュトークン（初回セットアップで取得）
+
+初回セットアップ:
+  setup/get_oauth_token.py を参照
 """
 
 import io
-import json
 import os
 from pathlib import Path
 
 import pandas as pd
-from google.oauth2.service_account import Credentials
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
@@ -25,11 +31,10 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # Google Drive 上のフォルダ ID（環境変数 or デフォルト）
-# MyPortfolioAutomation フォルダの各サブフォルダ ID を設定
 DRIVE_FOLDER_IDS = {
-    "data": os.environ.get("DRIVE_FOLDER_DATA", ""),
+    "data":        os.environ.get("DRIVE_FOLDER_DATA", ""),
     "screenshots": os.environ.get("DRIVE_FOLDER_SCREENSHOTS", ""),
-    "reports": os.environ.get("DRIVE_FOLDER_REPORTS", ""),
+    "reports":     os.environ.get("DRIVE_FOLDER_REPORTS", ""),
 }
 
 
@@ -42,21 +47,42 @@ class DriveHandler:
         self._file_id_cache: dict[str, str] = {}
 
     # ================================================================
-    # 認証
+    # 認証（OAuth2 リフレッシュトークン）
     # ================================================================
     def _authenticate(self):
-        """サービスアカウント JSON で認証し Drive API サービスを返す。"""
-        creds_json = os.environ.get("GOOGLE_DRIVE_CREDENTIALS")
-        if not creds_json:
+        """OAuth2 リフレッシュトークンで認証し Drive API サービスを返す。
+
+        サービスアカウントとは異なり、ユーザー自身のクォータを使用するため
+        通常の My Drive フォルダへの書き込みが可能。
+        """
+        client_id     = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+        client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+
+        if not all([client_id, client_secret, refresh_token]):
+            missing = [
+                name for name, val in [
+                    ("GOOGLE_OAUTH_CLIENT_ID",     client_id),
+                    ("GOOGLE_OAUTH_CLIENT_SECRET", client_secret),
+                    ("GOOGLE_OAUTH_REFRESH_TOKEN", refresh_token),
+                ] if not val
+            ]
             raise EnvironmentError(
-                "環境変数 GOOGLE_DRIVE_CREDENTIALS が設定されていません。"
+                f"以下の環境変数が未設定です: {', '.join(missing)}\n"
+                "setup/get_oauth_token.py を実行して各値を取得してください。"
             )
 
-        creds_info = json.loads(creds_json)
-        credentials = Credentials.from_service_account_info(
-            creds_info, scopes=SCOPES
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            client_id=client_id,
+            client_secret=client_secret,
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=SCOPES,
         )
-        return build("drive", "v3", credentials=credentials)
+        # リフレッシュトークンでアクセストークンを取得
+        creds.refresh(Request())
+        return build("drive", "v3", credentials=creds)
 
     # ================================================================
     # フォルダ ID 解決
@@ -64,13 +90,11 @@ class DriveHandler:
     def _resolve_folder_id(self, local_path: str) -> str | None:
         """ローカルパスから対応する Drive フォルダ ID を推定する。"""
         p = Path(local_path)
-        # パスの親ディレクトリ名でマッピング
         parent_name = p.parent.name.lower()
         if parent_name in DRIVE_FOLDER_IDS:
             folder_id = DRIVE_FOLDER_IDS[parent_name]
             return folder_id if folder_id else None
 
-        # data フォルダ直下の場合
         if "data" in str(p).lower():
             folder_id = DRIVE_FOLDER_IDS.get("data")
             return folder_id if folder_id else None
@@ -92,8 +116,6 @@ class DriveHandler:
                 q=query,
                 fields="files(id, name)",
                 pageSize=5,
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
             )
             .execute()
         )
@@ -113,11 +135,10 @@ class DriveHandler:
         if not p.exists():
             raise FileNotFoundError(f"ファイルが見つかりません: {local_path}")
 
-        filename = p.name
+        filename  = p.name
         folder_id = self._resolve_folder_id(local_path)
         mime_type = self._guess_mime_type(filename)
-
-        media = MediaFileUpload(str(p), mimetype=mime_type, resumable=True)
+        media     = MediaFileUpload(str(p), mimetype=mime_type, resumable=True)
 
         # 既存ファイルを検索
         existing_id = self._file_id_cache.get(filename) or self._find_file(
@@ -125,20 +146,17 @@ class DriveHandler:
         )
 
         if existing_id:
-            # 更新（既存ファイルのオーナーのクォータを使用）
+            # 既存ファイルを上書き更新
             file = (
                 self.service.files()
                 .update(
                     fileId=existing_id,
                     media_body=media,
-                    supportsAllDrives=True,
                 )
                 .execute()
             )
         else:
             # 新規作成
-            # ※ サービスアカウントにはストレージ容量がないため、
-            #    必ず共有フォルダ（parents指定）に作成する必要がある。
             if not folder_id:
                 print(f"  [WARN] フォルダIDが未設定のため Drive アップロードをスキップ: {filename}")
                 return ""
@@ -149,7 +167,6 @@ class DriveHandler:
                     body=file_metadata,
                     media_body=media,
                     fields="id",
-                    supportsAllDrives=True,
                 )
                 .execute()
             )
@@ -197,10 +214,10 @@ class DriveHandler:
 
         portfolio_data の期待構造:
         {
-            "total_value": float,           # 総資産額
-            "cash_jpy": float,              # 日本円現金
-            "cash_usd": float,              # 米ドル現金（VT除外分を含む）
-            "stock_value": float,           # 株式時価（VT除外後）
+            "total_value": float,
+            "cash_jpy": float,
+            "cash_usd": float,
+            "stock_value": float,
             "holdings": [
                 {"ticker": str, "value": float, "quantity": float},
                 ...
@@ -210,22 +227,19 @@ class DriveHandler:
         p = Path(csv_path)
         p.parent.mkdir(parents=True, exist_ok=True)
 
-        # 既存データ読み込み
         if p.exists():
             df = pd.read_csv(str(p))
         else:
             df = pd.DataFrame()
 
-        # 新規行を構築
         new_row = {
-            "date": date_str,
+            "date":        date_str,
             "total_value": portfolio_data["total_value"],
-            "cash_jpy": portfolio_data["cash_jpy"],
-            "cash_usd": portfolio_data["cash_usd"],
+            "cash_jpy":    portfolio_data["cash_jpy"],
+            "cash_usd":    portfolio_data["cash_usd"],
             "stock_value": portfolio_data["stock_value"],
         }
 
-        # 各銘柄の時価も列として追加
         for h in portfolio_data.get("holdings", []):
             col_name = f"holding_{h['ticker']}"
             new_row[col_name] = h["value"]
@@ -242,12 +256,12 @@ class DriveHandler:
         """ファイル名から MIME タイプを推定する。"""
         ext = Path(filename).suffix.lower()
         mime_map = {
-            ".csv": "text/csv",
-            ".md": "text/markdown",
-            ".txt": "text/plain",
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
+            ".csv":  "text/csv",
+            ".md":   "text/markdown",
+            ".txt":  "text/plain",
+            ".png":  "image/png",
+            ".jpg":  "image/jpeg",
             ".json": "application/json",
-            ".pdf": "application/pdf",
+            ".pdf":  "application/pdf",
         }
         return mime_map.get(ext, "application/octet-stream")
