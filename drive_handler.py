@@ -45,6 +45,12 @@ class DriveHandler:
         self.service = self._authenticate()
         # アップロード済みファイルの ID キャッシュ {ファイル名: file_id}
         self._file_id_cache: dict[str, str] = {}
+        # 設定フォルダIDをログに表示（デバッグ用）
+        for key, fid in DRIVE_FOLDER_IDS.items():
+            if fid:
+                print(f"  [DRIVE] {key} フォルダ: https://drive.google.com/drive/folders/{fid}")
+            else:
+                print(f"  [DRIVE] {key} フォルダ: 未設定 (DRIVE_FOLDER_{key.upper()})")
 
     # ================================================================
     # 認証（OAuth2 リフレッシュトークン）
@@ -173,6 +179,8 @@ class DriveHandler:
 
         file_id = file.get("id", existing_id)
         self._file_id_cache[filename] = file_id
+        # アップロード先 URL をログに出力（どのフォルダに入ったか確認用）
+        print(f"    Drive URL: https://drive.google.com/file/d/{file_id}/view")
         return file_id
 
     # ================================================================
