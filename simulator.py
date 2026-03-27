@@ -335,11 +335,11 @@ def _project_assets(
 
         # 公的年金（智明様、受給開始年齢〜寿命まで）
         if tomoaki_alive and t_age >= pension_start:
-            income += params["public_pension_annual"]
+            income += params["tomoaki_public_pension_annual"]
 
         # 紀子様の公的年金（受給開始年齢〜終身）
         if n_age >= pension_start:
-            income += params["public_pension_annual"]
+            income += params["noriko_public_pension_annual"]
 
         # --- 支出計算（智明の年齢ベース）---
         spending_rate = params.get("spending_rate_after_tomoaki", 0.50)
