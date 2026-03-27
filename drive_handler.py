@@ -238,11 +238,18 @@ class DriveHandler:
             "cash_jpy":    portfolio_data["cash_jpy"],
             "cash_usd":    portfolio_data["cash_usd"],
             "stock_value": portfolio_data["stock_value"],
+            "fund_value":  portfolio_data.get("fund_value", 0),
         }
 
         for h in portfolio_data.get("holdings", []):
             col_name = f"holding_{h['ticker']}"
             new_row[col_name] = h["value"]
+
+        for f in portfolio_data.get("funds", []):
+            # 投信名は長いので短縮キーを使用
+            fund_key = f["name"][:30].replace(",", "")
+            col_name = f"holding_{fund_key}"
+            new_row[col_name] = new_row.get(col_name, 0) + f["value"]
 
         new_df = pd.DataFrame([new_row])
         df = pd.concat([df, new_df], ignore_index=True)

@@ -71,11 +71,18 @@ def run_simulation(
     # history.csv から直近12ヶ月の資産減少 + 収入を考慮して推定
     annual_spending = _estimate_annual_spending(history_df, params)
 
+    # --- リスク資産比率を算出 ---
+    stock_val = portfolio_data.get("stock_value", 0)
+    fund_val = portfolio_data.get("fund_value", 0)
+    risk_assets = stock_val + fund_val
+    risk_ratio = risk_assets / current_total if current_total > 0 else 0.0
+
     # --- 105歳までの資産推移を計算 ---
     projection = _project_assets(
         current_total=current_total,
         annual_spending=annual_spending,
         params=params,
+        risk_ratio=risk_ratio,
         spending_cut=yoy_change_pct is not None and yoy_change_pct <= -params["decline_threshold"],
     )
 
@@ -163,10 +170,14 @@ def _estimate_annual_spending(history_df: pd.DataFrame, params: dict) -> float:
 
         # 年金収入見込み（現在受給中かどうかで分岐）
         income = 0
+        tomoaki_age = params["tomoaki_age"]
         noriko_age = params["noriko_age"]
-        if noriko_age >= 65:
+        pension_start = params.get("public_pension_start_age", 65)
+        if tomoaki_age >= pension_start and tomoaki_age <= params["tomoaki_lifespan"]:
             income += params["public_pension_annual"]
-        if noriko_age < 65 and noriko_age >= 60:
+        if noriko_age >= pension_start:
+            income += params["public_pension_annual"]
+        if 60 <= tomoaki_age < 60 + params["private_pension_years"]:
             income += params["private_pension_annual"]
 
         spending = (start_val - end_val) + income
@@ -183,15 +194,21 @@ def _project_assets(
     current_total: float,
     annual_spending: float,
     params: dict,
-    spending_cut: bool,
+    risk_ratio: float = 0.0,
+    spending_cut: bool = False,
 ) -> pd.DataFrame:
     """
     紀子様の105歳までの資産推移を年単位でシミュレーションする。
     基準は紀子様の年齢（より長寿の方を基準）。
+
+    - 支出フェーズは智明様の年齢に基づく
+    - リスク資産（risk_ratio 分）に対して年利 5%/4% の運用益を加算
     """
     noriko_age = params["noriko_age"]
     tomoaki_age = params["tomoaki_age"]
     target_age = params["noriko_lifespan"]  # 105歳
+    tomoaki_lifespan = params["tomoaki_lifespan"]
+    pension_start = params.get("public_pension_start_age", 65)
 
     rows = []
     assets = current_total
@@ -199,37 +216,47 @@ def _project_assets(
     for year_offset in range(target_age - noriko_age + 1):
         n_age = noriko_age + year_offset
         t_age = tomoaki_age + year_offset
+        tomoaki_alive = t_age <= tomoaki_lifespan
+
+        # --- 運用益計算（リスク資産分のみ）---
+        if assets > 0 and risk_ratio > 0:
+            rate = params.get("return_rate_before_75", 0.05) if t_age <= 75 \
+                else params.get("return_rate_after_75", 0.04)
+            investment_return = assets * risk_ratio * rate
+        else:
+            investment_return = 0.0
 
         # --- 収入計算 ---
         income = 0.0
 
         # 私的年金（智明様 60〜69歳の10年間と仮定）
-        if 60 <= t_age < 60 + params["private_pension_years"]:
+        if tomoaki_alive and 60 <= t_age < 60 + params["private_pension_years"]:
             income += params["private_pension_annual"]
 
-        # 公的年金（智明様 65歳〜終身、ただし寿命まで）
-        if t_age >= 65 and t_age <= params["tomoaki_lifespan"]:
+        # 公的年金（智明様、受給開始年齢〜寿命まで）
+        if tomoaki_alive and t_age >= pension_start:
             income += params["public_pension_annual"]
 
-        # 紀子様の公的年金（65歳〜終身）
-        if n_age >= 65:
+        # 紀子様の公的年金（受給開始年齢〜終身）
+        if n_age >= pension_start:
             income += params["public_pension_annual"]
 
-        # --- 支出計算 ---
-        spending_rate = 1.0
-        for phase in params["spending_phases"]:
-            if n_age <= phase["until_age"]:
-                spending_rate = phase["rate"]
-                break
+        # --- 支出計算（智明の年齢ベース）---
+        spending_rate = params.get("spending_rate_after_tomoaki", 0.50)
+        if tomoaki_alive:
+            for phase in params["spending_phases"]:
+                if t_age <= phase["until_tomoaki_age"]:
+                    spending_rate = phase["rate"]
+                    break
 
         spending = annual_spending * spending_rate
 
-        # 支出削減警告が出ている場合
+        # 支出削減警告が出ている場合（直近2年のみ適用）
         if spending_cut and year_offset < 2:
             spending *= (1 - params["spending_cut_rate"])
 
         # --- 資産推移 ---
-        net = income - spending
+        net = investment_return + income - spending
         assets = max(0, assets + net)
 
         rows.append({
@@ -237,6 +264,7 @@ def _project_assets(
             "noriko_age": n_age,
             "tomoaki_age": t_age,
             "income": income,
+            "investment_return": investment_return,
             "spending": spending,
             "net": net,
             "assets": assets,
@@ -262,8 +290,20 @@ def _plot_simulation(projection: pd.DataFrame, sim_result: dict, path: str) -> N
             linestyle="--", linewidth=1.5, label=f'枯渇: 紀子様 {sim_result["depletion_age"]}歳'
         )
 
-    # 年金開始ライン
-    ax.axvline(x=65, color="green", linestyle=":", alpha=0.5, label="公的年金開始 (65歳)")
+    # 年金開始ライン（紀子様の年齢で表示）
+    ax.axvline(x=75, color="green", linestyle=":", alpha=0.5, label="公的年金開始 (75歳)")
+
+    # 智明様の寿命ライン（紀子様の年齢に換算）
+    # 智明87歳 ≒ 紀子81歳（6歳差）
+    if "tomoaki_age" in projection.columns:
+        tomoaki_end_row = projection[projection["tomoaki_age"] == 87]
+        if not tomoaki_end_row.empty:
+            noriko_age_at_tomoaki_end = int(tomoaki_end_row.iloc[0]["noriko_age"])
+            ax.axvline(
+                x=noriko_age_at_tomoaki_end, color="orange",
+                linestyle="--", alpha=0.6, linewidth=1.2,
+                label=f"智明様寿命 (紀子様{noriko_age_at_tomoaki_end}歳時点)"
+            )
 
     ax.set_xlabel("紀子様の年齢", fontsize=12)
     ax.set_ylabel("資産残高 (万円)", fontsize=12)

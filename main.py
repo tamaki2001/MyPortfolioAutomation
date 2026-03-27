@@ -93,12 +93,18 @@ SIMULATION_PARAMS = {
     "noriko_lifespan": 105,
     "private_pension_annual": 80_0000,   # 私的年金 80万/年
     "private_pension_years": 10,          # 私的年金 10年間
-    "public_pension_annual": 240_0000,    # 公的年金 240万/年（終身）
-    "spending_phases": [                  # 段階的支出モデル
-        {"until_age": 75, "rate": 1.00},  # 100%
-        {"until_age": 90, "rate": 0.75},  # 75%
-        {"until_age": 105, "rate": 0.50}, # 50%
+    "public_pension_annual": 240_0000,    # 公的年金 240万/年（終身、75歳～）
+    "public_pension_start_age": 75,       # 公的年金の受給開始年齢
+    # 段階的支出モデル（智明の年齢ベース）
+    "spending_phases": [
+        {"until_tomoaki_age": 75, "rate": 1.00},   # 智明57〜75歳: 100%
+        {"until_tomoaki_age": 83, "rate": 0.75},   # 智明76〜83歳: 75%
+        {"until_tomoaki_age": 87, "rate": 0.50},   # 智明84〜87歳: 50%
     ],
+    "spending_rate_after_tomoaki": 0.50,  # 智明没後（紀子のみ）: 50%維持
+    # リスク資産の運用利回り
+    "return_rate_before_75": 0.05,        # 智明75歳まで: 年利5%
+    "return_rate_after_75": 0.04,         # 智明76歳以降: 年利4%
     "decline_threshold": 0.20,            # 前年同月比 20%減で警告
     "spending_cut_rate": 0.10,            # 警告時の支出削減率
 }

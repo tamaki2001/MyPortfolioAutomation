@@ -17,8 +17,8 @@ from datetime import datetime
 import anthropic
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL = "claude-sonnet-4-20250514"
-MAX_TOKENS = 4096
+MODEL = "claude-sonnet-4-20250514"  # Claude Sonnet 4
+MAX_TOKENS = 8192
 
 
 def generate_report(
@@ -150,6 +150,7 @@ def _build_user_prompt(
 - 日本円現金: {portfolio_data['cash_jpy']:,.0f} 円
 - 米ドル現金: {portfolio_data['cash_usd']:,.0f} 円
 - 株式時価合計: {portfolio_data['stock_value']:,.0f} 円
+- 投資信託時価合計: {portfolio_data.get('fund_value', 0):,.0f} 円
 
 ### 保有銘柄
 {holdings_text}
@@ -163,9 +164,10 @@ def _build_user_prompt(
 {news_summary}
 
 ---
-**重要**: 「Ultra C」として、個別株のストーリー乖離を必ず検証し、
-浅野様の「知識での武装」に対する鋭い問いかけをレポートに含めてください。
-上記「銘柄名⇔ストーリーキー対応表」を使い、ポートフォリオの全銘柄（インデックスファンドを含む）を分析してください。"""
+**重要**:
+- 「Ultra C」として、個別株のストーリー乖離を必ず検証し、浅野様の「知識での武装」に対する鋭い問いかけをレポートに含めてください。
+- 上記「銘柄名⇔ストーリーキー対応表」を使い、ポートフォリオの全銘柄（インデックスファンド・投資信託を含む）を分析してください。
+- 各ニュース記事を参照する際は、出典URLをMarkdownリンク形式 [記事タイトル](URL) で記載してください。"""
 
 
 # ================================================================
@@ -209,7 +211,10 @@ def _summarize_news(news: dict[str, list[dict]], stories_dict: dict | None = Non
             lines.append("  - 該当ニュースなし")
             continue
         for a in articles:
+            url = a.get("url", "")
             lines.append(f"  - [{a['source']}] {a['title']}")
+            if url:
+                lines.append(f"    出典: {url}")
             if a["description"]:
                 lines.append(f"    {a['description'][:150]}")
     return "\n".join(lines)
@@ -235,12 +240,17 @@ def _build_ticker_mapping(portfolio_data: dict, stories_dict: dict) -> str:
 
 
 def _format_holdings(portfolio_data: dict) -> str:
-    """保有銘柄をテキスト形式にする。"""
+    """保有銘柄（株式＋投資信託）をテキスト形式にする。"""
     lines = []
     for h in portfolio_data.get("holdings", []):
         lines.append(
             f"  - {h['ticker']}: {h['value']:,.0f} 円 "
             f"({h['quantity']:.0f}株 × {h.get('price', 0):,.0f}円)"
+        )
+    for f in portfolio_data.get("funds", []):
+        lines.append(
+            f"  - [投信] {f['name']}: {f['value']:,.0f} 円 "
+            f"({f['quantity']:.0f}口 × 基準価額 {f.get('nav', 0):,.0f}円)"
         )
     return "\n".join(lines) if lines else "  - (データなし)"
 
