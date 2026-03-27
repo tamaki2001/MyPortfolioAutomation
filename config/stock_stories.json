@@ -1,7 +1,26 @@
 {
+  "8136": {
+    "ticker": "8136",
+    "asset_type": "jp_stock",
+    "company": "サンリオ株式会社",
+    "thesis": "ハローキティを中心とした IP ポートフォリオのグローバル展開と、辻信太郎 CEO 就任後の V字回復が継続中。ライセンス収益モデルへのシフトが収益性を劇的に改善。",
+    "key_metrics": [
+      "IPライセンス収益の成長率",
+      "海外売上比率（特にアジア・欧米）",
+      "テーマパーク来場者数と物販単価"
+    ],
+    "exit_conditions": [
+      "ハローキティ等主要IPの人気衰退の兆候",
+      "後継IP育成の失敗",
+      "海外展開の失速（特に中国市場）"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "コンテンツIPのグローバル展開において稀有な日本株の事例"
+  },
   "LLY": {
     "ticker": "LLY",
-    "company": "Eli Lilly",
+    "asset_type": "us_stock",
+    "company": "Eli Lilly and Company",
     "thesis": "GLP-1受容体作動薬（Mounjaro/Zepbound）の肥満治療市場における圧倒的成長ポテンシャル。NVO（Novo Nordisk）との競争で優位性を維持できるかが鍵。",
     "key_metrics": [
       "Mounjaro/Zepbound の売上成長率",
@@ -18,7 +37,8 @@
   },
   "ISRG": {
     "ticker": "ISRG",
-    "company": "Intuitive Surgical",
+    "asset_type": "us_stock",
+    "company": "Intuitive Surgical, Inc.",
     "thesis": "手術支援ロボット da Vinci の圧倒的市場シェアと、消耗品ビジネスによるリカーリング収益モデル。新規参入者（Medtronic Hugo等）に対するモート（堀）の持続性が鍵。",
     "key_metrics": [
       "da Vinci 設置台数の伸び",
@@ -32,5 +52,136 @@
     ],
     "added_date": "2024-01-01",
     "notes": "シェア維持が最重要指標"
+  },
+  "NVDA": {
+    "ticker": "NVDA",
+    "asset_type": "us_stock",
+    "company": "NVIDIA Corporation",
+    "thesis": "AI学習・推論に不可欠なGPUのデファクトスタンダードとして、データセンター需要の爆発的成長の最大受益者。CUDAエコシステムによる強固な参入障壁が持続的優位性の源泉。",
+    "key_metrics": [
+      "データセンター部門の四半期売上成長率",
+      "決算におけるアナリスト予想を上回り続けられるか",
+      "AMD・Intel・カスタムASICのシェア動向",
+      "フィジカルAIにおけるNo.1ベンダーであり続けているか"
+    ],
+    "exit_conditions": [
+      "大手クラウド企業による自社チップへの大規模移行",
+      "CUDA代替エコシステムの台頭",
+      "データセンター投資サイクルの急減速"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "含み益1,200%超。ポジションサイズの定期的な見直しが必要"
+  },
+  "MSFT": {
+    "ticker": "MSFT",
+    "asset_type": "us_stock",
+    "company": "Microsoft Corporation",
+    "thesis": "Azure クラウドと OpenAI への戦略的投資により、企業向け AI インフラのプラットフォームとして確固たる地位を構築。Copilot の収益化が次の成長ドライバー。",
+    "key_metrics": [
+      "Azure の売上成長率（前年比）",
+      "Copilot の有料ユーザー数・ARPU",
+      "クラウド部門の営業利益率"
+    ],
+    "exit_conditions": [
+      "Azure のシェアが AWS に大幅逆転された場合",
+      "OpenAI との関係悪化・競合化",
+      "企業向けAI投資のROI懐疑論が広がった場合"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "含み益約199%。安定した現金創出力が下支え"
+  },
+  "GOOG": {
+    "ticker": "GOOG",
+    "asset_type": "us_stock",
+    "company": "Alphabet Inc. (Class C)",
+    "thesis": "検索広告のデファクト独占と Google Cloud の成長が二本柱。AI（Gemini）による検索体験の変革が脅威にも機会にもなりうる両刃の剣。",
+    "key_metrics": [
+      "検索広告売上の成長率",
+      "Google Cloud 売上成長率と営業利益率",
+      "AI Overview による検索単価（RPM）への影響",
+      "一般向け生成AIとしてユーザー数トップ2社に入っているか"
+    ],
+    "exit_conditions": [
+      "OpenAI/Perplexity 等が検索市場シェアを10%超奪取した場合",
+      "規制当局による検索・広告事業の強制分離",
+      "AI検索移行による広告単価の構造的低下"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "現在含み損。AI検索移行リスクの継続モニタリングが必須"
+  },
+  "AVGO": {
+    "ticker": "AVGO",
+    "asset_type": "us_stock",
+    "company": "Broadcom Inc.",
+    "thesis": "カスタムAIチップ（XPU）設計とネットワーキング半導体で、AI推論インフラの重要部品を担う。VMware統合による企業向けソフトウェアビジネスの拡大も成長加速要因。",
+    "key_metrics": [
+      "AIセミコンダクター部門の売上（Google/Meta向けXPU）",
+      "VMware統合の進捗と解約率",
+      "ネットワーキング製品の市場シェア"
+    ],
+    "exit_conditions": [
+      "主要顧客（Google/Meta）による内製化の加速",
+      "VMware統合コストの予想超過",
+      "半導体サイクル悪化による設備投資削減"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "AI半導体エクスポージャーとして NVDA の補完的役割"
+  },
+  "COST": {
+    "ticker": "COST",
+    "asset_type": "us_stock",
+    "company": "Costco Wholesale Corporation",
+    "thesis": "会員制ビジネスモデルによる安定したリカーリング収益と、圧倒的な低コスト運営が生み出す価格競争力。インフレ環境下でも会員更新率が95%超を維持する卓越した顧客ロイヤリティ。",
+    "key_metrics": [
+      "会員更新率（目標95%以上維持）",
+      "既存店売上成長率（コンパラブル・セールス）",
+      "会員数の純増ペース（特に海外）"
+    ],
+    "exit_conditions": [
+      "会員更新率が93%を下回った場合",
+      "Amazon/Walmart による会員制モデルの本格侵食",
+      "中産階級の購買力低下による既存店売上の構造的鈍化"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "現在含み損。高バリュエーションが常にリスク要因"
+  },
+  "eMAXIS_Slim_全世界": {
+    "ticker": "eMAXIS_Slim_全世界",
+    "asset_type": "fund_index",
+    "company": "三菱UFJアセットマネジメント",
+    "product_name": "eMAXIS Slim 全世界株式（オール・カントリー）",
+    "thesis": "MSCI ACWI に連動する世界最低水準の信託報酬（0.05775%）インデックスファンド。全世界の経済成長を最小コストで享受する長期積立のコアポジション。乗り換えるべき競合は現時点で存在しない。",
+    "key_metrics": [
+      "信託報酬率（競合との比較）",
+      "純資産総額の推移（2兆円超維持）",
+      "ベンチマーク（MSCI ACWI）との乖離率",
+      "他の資産と総合した時のセクターの重複"
+    ],
+    "exit_conditions": [
+      "より低コストな同カテゴリファンドの登場（信託報酬0.04%以下）",
+      "運用方針・ベンチマークの重大変更",
+      "三菱UFJによる繰上償還リスクの顕在化"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "現在3口座合計で保有。「ストーリー逸脱」より「乗り換えコスト試算」で判断"
+  },
+  "VT": {
+    "ticker": "VT",
+    "asset_type": "fund_index",
+    "company": "Vanguard",
+    "product_name": "Vanguard Total World Stock ETF",
+    "thesis": "全世界株式に連動するバンガードのETF。現在93株を保有（478株はVT特殊ルールで米ドル現金として管理）。長期インデックス戦略の米国口座側コアポジション。",
+    "key_metrics": [
+      "経費率（0.07%）の水準維持",
+      "純資産総額と流動性",
+      "FTSE Global All Cap Index との乖離"
+    ],
+    "exit_conditions": [
+      "経費率の大幅引き上げ",
+      "より低コストな代替ETFの登場",
+      "円建て資産へのリバランス判断"
+    ],
+    "added_date": "2024-01-01",
+    "notes": "478株は米ドル現金として管理（VT特殊ルール）。93株が投資ポジション"
   }
 }
