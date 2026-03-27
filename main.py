@@ -19,12 +19,17 @@ import os
 import sys
 import calendar
 import traceback
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 
+# ============================================================
+# タイムゾーン設定 (JST)
+# ============================================================
+JST = timezone(timedelta(hours=+9), 'JST')
 
 # ============================================================
 # 誕生日・年齢計算
+
 # ============================================================
 # 誕生日設定（ここだけ変更すれば全体に反映される）
 TOMOAKI_BIRTHDATE = date(1968, 8, 25)
@@ -122,15 +127,16 @@ def is_last_day_of_month(d: date) -> bool:
 
 
 def today_tag() -> str:
-    """YYMMDD_HHMMSS形式の日付タグを返す（毎回の実行結果を上書きせずに蓄積するため）。"""
-    return datetime.now().strftime("%y%m%d_%H%M%S")
+    """YYMMDD_HHMMSS形式の日付タグを返す（毎回の実行結果を上書きせずに蓄積するため）。JSTを使用。"""
+    return datetime.now(JST).strftime("%y%m%d_%H%M%S")
 
 
 # ============================================================
 # メインワークフロー
 # ============================================================
 def main():
-    today = date.today()
+    now_jst = datetime.now(JST)
+    today = now_jst.date()
     tag = today_tag()
 
     # ----------------------------------------------------------
