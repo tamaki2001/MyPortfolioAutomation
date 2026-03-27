@@ -1,113 +1,102 @@
 """
-ニュース取得モジュール
-====================
-個別株の最新ニュースを取得する。
-  1. NewsAPI（有効な場合）
-  2. フォールバック: 静的コンテキスト（APIが利用不可の場合）
+ニュース取得モジュール（RSS方式）
+==================================
+Yahoo Finance RSS を使用して銘柄別ニュースを取得する。
+- APIキー不要
+- サーバー環境（GitHub Actions）から取得可能
+- 無料・制限なし
 
-LLY は競合 NVO との比較ニュースを重視、
-ISRG はシェア動向のニュースを重視する。
+日本株は Yahoo Finance Japan (.T サフィックス) で取得。
+投資信託は市場全体ニュースにフォールバック。
 """
 
-import os
-from datetime import datetime, timedelta
+import feedparser
+from datetime import datetime, timezone
 
-import requests
+# Yahoo Finance RSS (ティッカー別)
+_YF_US  = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}&region=US&lang=en-US"
+_YF_JP  = "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}.T&region=JP&lang=ja-JP"
 
-NEWS_API_KEY = os.environ.get("NEWS_API_KEY", "")
-NEWS_API_URL = "https://newsapi.org/v2/everything"
+# 日本株ティッカー → Yahoo Finance Japan 用に変換
+_JP_TICKERS = {"8136", "7203", "6758", "9984", "4661", "8411", "8306", "6501"}
 
-# 銘柄ごとの検索クエリカスタマイズ
-QUERY_MAP = {
-    "LLY": '("Eli Lilly" OR "LLY") AND ("Novo Nordisk" OR "NVO" OR "obesity" OR "GLP-1" OR "weight loss")',
-    "ISRG": '("Intuitive Surgical" OR "ISRG") AND ("market share" OR "da Vinci" OR "robotic surgery")',
-    "NVO": '("Novo Nordisk" OR "NVO") AND ("Wegovy" OR "Ozempic" OR "obesity" OR "GLP-1")',
+# 投資信託・ETFは市場全体ニュースを使用
+_MARKET_RSS = {
+    "VT":   _YF_US.format(ticker="VT"),
+    "VOO":  _YF_US.format(ticker="VOO"),
+    "default_fund": "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US",
 }
 
-DEFAULT_QUERY_TEMPLATE = '"{ticker}"'
-LOOKBACK_DAYS = 30
-MAX_ARTICLES = 5
+MAX_ARTICLES = 3
 
 
-def fetch_stock_news(tickers: list[str]) -> dict[str, list[dict]]:
+def fetch_stock_news(
+    tickers: list[str],
+    stories: dict | None = None,
+) -> dict[str, list[dict]]:
     """
-    指定ティッカーの最新ニュースを取得する。
+    指定ティッカーの最新ニュースを Yahoo Finance RSS から取得する。
 
     Args:
-        tickers: ティッカーシンボルのリスト (例: ["LLY", "ISRG", "NVO"])
+        tickers: 識別子のリスト (例: ["LLY", "ISRG", "8136"])
+        stories: 未使用（後方互換のために保持）
 
     Returns:
-        {
-            "LLY": [
-                {"title": str, "description": str, "url": str,
-                 "published_at": str, "source": str},
-                ...
-            ],
-            ...
-        }
+        {ticker: [{"title", "description", "url", "published_at", "source"}, ...]}
     """
-    if not NEWS_API_KEY:
-        print("[WARN] NEWS_API_KEY が未設定のためニュース取得をスキップします。")
-        return {t: [] for t in tickers}
-
-    from_date = (datetime.now() - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     results = {}
-
     for ticker in tickers:
-        query = QUERY_MAP.get(ticker, DEFAULT_QUERY_TEMPLATE.format(ticker=ticker))
-        articles = _fetch_articles(query, from_date)
-
-        # NewsAPI が失敗した場合、シンプルなクエリでリトライ
-        if not articles:
-            simple_query = f'"{ticker}"'
-            if simple_query != query:
-                articles = _fetch_articles(simple_query, from_date)
-
-        results[ticker] = articles
-
+        results[ticker] = _fetch_for_ticker(ticker)
     return results
 
 
-def _fetch_articles(query: str, from_date: str) -> list[dict]:
-    """NewsAPI から記事を取得する。"""
+def _fetch_for_ticker(ticker: str) -> list[dict]:
+    """ティッカーに応じた RSS URL を選択して取得する。"""
+    # 投資信託系は別扱い
+    if ticker.startswith("eMAXIS") or ticker.startswith("SBI_V") or "投信" in ticker:
+        url = _MARKET_RSS["default_fund"]
+    elif ticker in _MARKET_RSS:
+        url = _MARKET_RSS[ticker]
+    elif ticker in _JP_TICKERS:
+        url = _YF_JP.format(ticker=ticker)
+    else:
+        url = _YF_US.format(ticker=ticker)
+
+    return _parse_rss(url, ticker)
+
+
+def _parse_rss(url: str, ticker: str) -> list[dict]:
+    """RSS フィードを解析して記事リストを返す。"""
     try:
-        resp = requests.get(
-            NEWS_API_URL,
-            params={
-                "q": query,
-                "from": from_date,
-                "sortBy": "relevancy",
-                "language": "en",
-                "pageSize": MAX_ARTICLES,
-                "apiKey": NEWS_API_KEY,
-            },
-            timeout=15,
-        )
-
-        # 426 Upgrade Required = 無料プラン制限
-        if resp.status_code == 426:
-            print(f"[WARN] NewsAPI無料プラン制限（426）。ニュース取得をスキップ。")
-            return []
-
-        # 401 = APIキー無効
-        if resp.status_code == 401:
-            print(f"[WARN] NewsAPIキーが無効です（401）。")
-            return []
-
-        resp.raise_for_status()
-        data = resp.json()
-
+        feed = feedparser.parse(url)
         articles = []
-        for a in data.get("articles", []):
+        for entry in feed.entries[:MAX_ARTICLES]:
+            published = _format_date(entry)
             articles.append({
-                "title": a.get("title", ""),
-                "description": a.get("description", ""),
-                "url": a.get("url", ""),
-                "published_at": a.get("publishedAt", ""),
-                "source": a.get("source", {}).get("name", ""),
+                "title":        entry.get("title", ""),
+                "description":  entry.get("summary", ""),
+                "url":          entry.get("link", ""),
+                "published_at": published,
+                "source":       "Yahoo Finance",
             })
+        if articles:
+            print(f"  [NEWS] {ticker}: {len(articles)}件取得")
+        else:
+            print(f"  [NEWS] {ticker}: 記事なし（RSS空）")
         return articles
 
-    except requests.RequestException as e:
-        print(f"[WARN] ニュース取得失敗 (query={query[:40]}...): {e}")
+    except Exception as e:
+        print(f"  [WARN] {ticker} RSS取得失敗: {e}")
         return []
+
+
+def _format_date(entry) -> str:
+    """feedparser の日付を ISO 文字列に変換する。"""
+    try:
+        t = entry.get("published_parsed")
+        if t:
+            dt = datetime(*t[:6], tzinfo=timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        pass
+    return entry.get("published", "")
