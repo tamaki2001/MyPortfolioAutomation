@@ -246,6 +246,12 @@ class DriveHandler:
 
         new_df = pd.DataFrame([new_row])
         df = pd.concat([df, new_df], ignore_index=True)
+
+        # 同一日付の重複は最新1件のみ残す（同日に複数回実行した場合の上書き）
+        df["date"] = pd.to_datetime(df["date"]).dt.date.astype(str)
+        df = df.drop_duplicates(subset=["date"], keep="last")
+        df = df.sort_values("date").reset_index(drop=True)
+
         df.to_csv(str(p), index=False)
 
     # ================================================================

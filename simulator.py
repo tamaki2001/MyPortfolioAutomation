@@ -114,11 +114,13 @@ def generate_charts(
     _plot_simulation(sim_result["projection"], sim_result, path1)
     paths.append(path1)
 
-    # --- グラフ2: 1年前との比較 ---
+    # --- グラフ2: 過去との比較（日付ベース：最古データが今日と異なれば生成）---
     if not history_df.empty and len(history_df) >= 2:
-        path2 = str(out / f"{tag}_comparison.png")
-        _plot_yearly_comparison(history_df, path2)
-        paths.append(path2)
+        history_df["date"] = pd.to_datetime(history_df["date"])
+        if history_df["date"].iloc[0] != history_df["date"].iloc[-1]:
+            path2 = str(out / f"{tag}_comparison.png")
+            _plot_yearly_comparison(history_df, path2)
+            paths.append(path2)
 
     return paths
 
@@ -276,15 +278,38 @@ def _plot_simulation(projection: pd.DataFrame, sim_result: dict, path: str) -> N
 
 
 def _plot_yearly_comparison(history_df: pd.DataFrame, path: str) -> None:
-    """1年前との資産構成比較グラフを描画する。"""
+    """過去との資産構成比較グラフを描画する（日付ベースで比較対象を選択）。"""
+    import pandas as pd
+    from datetime import timedelta
+
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-    # 直近と12ヶ月前のデータ
+    history_df = history_df.copy()
+    history_df["date"] = pd.to_datetime(history_df["date"])
     current = history_df.iloc[-1]
-    past = history_df.iloc[-12] if len(history_df) >= 12 else history_df.iloc[0]
+    current_date = current["date"]
+
+    # 「約1年前」を日付で検索：current_date - 365日 に最も近いデータ
+    target_date = current_date - timedelta(days=365)
+    date_diffs = (history_df["date"] - target_date).abs()
+    past = history_df.loc[date_diffs.idxmin()]
+    past_date = past["date"]
+
+    # タイトル：実際の日数差を表示
+    days_diff = (current_date - past_date).days
+    if days_diff >= 300:
+        past_label = f"約1年前 ({row_date(past)})"
+    elif days_diff >= 60:
+        months = round(days_diff / 30)
+        past_label = f"約{months}ヶ月前 ({row_date(past)})"
+    elif days_diff >= 14:
+        weeks = round(days_diff / 7)
+        past_label = f"約{weeks}週間前 ({row_date(past)})"
+    else:
+        past_label = f"{days_diff}日前 ({row_date(past)})"
 
     for ax, row, title in [
-        (axes[0], past, f"1年前 ({row_date(past)})"),
+        (axes[0], past, past_label),
         (axes[1], current, f"最新 ({row_date(current)})"),
     ]:
         # 現金・株式の内訳
