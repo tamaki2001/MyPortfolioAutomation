@@ -22,6 +22,41 @@ import traceback
 from datetime import date, datetime
 from pathlib import Path
 
+
+# ============================================================
+# 誕生日・年齢計算
+# ============================================================
+# 誕生日設定（ここだけ変更すれば全体に反映される）
+TOMOAKI_BIRTHDATE = date(1968, 8, 25)
+# 紀子さんの誕生日が判明したら date(yyyy, mm, dd) に変更してください
+# 未設定の場合は実行日時点で 51 歳になる年の 1 月 1 日を仮定します
+NORIKO_BIRTHDATE: date | None = date(1974, 4, 12)
+
+
+def calc_age(birthdate: date, reference: date | None = None) -> int:
+    """誕生日と基準日（デフォルト: 今日）から年齢を計算する。"""
+    ref = reference or date.today()
+    age = ref.year - birthdate.year
+    if (ref.month, ref.day) < (birthdate.month, birthdate.day):
+        age -= 1
+    return age
+
+
+def _noriko_age_today() -> int:
+    """紀子さんの年齢を返す。誕生日未設定の場合は環境変数 NORIKO_AGE_OVERRIDE を参照する。"""
+    if NORIKO_BIRTHDATE is not None:
+        return calc_age(NORIKO_BIRTHDATE)
+    override = os.environ.get("NORIKO_AGE_OVERRIDE")
+    if override and override.isdigit():
+        return int(override)
+    # フォールバック: ファイル先頭コメントの固定値（要更新）
+    FALLBACK_NORIKO_AGE = 51
+    print(
+        f"[WARN] NORIKO_BIRTHDATE 未設定。フォールバック値 {FALLBACK_NORIKO_AGE} を使用します。"
+        " NORIKO_BIRTHDATE を設定するか、環境変数 NORIKO_AGE_OVERRIDE を指定してください。"
+    )
+    return FALLBACK_NORIKO_AGE
+
 # --- モジュールインポート ---
 from drive_handler import DriveHandler
 from scraper import scrape_portfolio  # Cookie注入方式（MF_COOKIES環境変数 or cookies.json）
@@ -50,10 +85,11 @@ REPORT_TEMPLATE = CONFIG_DIR / "report_template.txt"
 VT_EXCLUDE_SHARES = 478
 
 # 資産寿命シミュレーション パラメータ
+# ※ tomoaki_age / noriko_age は main() 内で実行時に動的セットされる（ここでは仮置き）
 SIMULATION_PARAMS = {
-    "tomoaki_age": 57,
+    "tomoaki_age": calc_age(TOMOAKI_BIRTHDATE),  # 実行日時点の年齢を自動計算
     "tomoaki_lifespan": 87,
-    "noriko_age": 51,
+    "noriko_age": _noriko_age_today(),            # 誕生日設定後は calc_age(NORIKO_BIRTHDATE) に変わる
     "noriko_lifespan": 105,
     "private_pension_annual": 80_0000,   # 私的年金 80万/年
     "private_pension_years": 10,          # 私的年金 10年間
@@ -143,8 +179,13 @@ def main():
         # ----------------------------------------------------------
         print("[STEP 4] 運用方針・ニュースを取得中...")
         financial_policy = FINANCIAL_POLICY.read_text(encoding="utf-8")
-        stock_stories = STOCK_STORIES.read_text(encoding="utf-8")
-        news = fetch_stock_news(["LLY", "ISRG", "NVO"])
+        stock_stories_text = STOCK_STORIES.read_text(encoding="utf-8")
+        import json as _json
+        stock_stories_dict = _json.loads(stock_stories_text)
+
+        # ニュース取得対象: stock_stories.json に登録されたすべての識別子
+        news_tickers = list(stock_stories_dict.keys())
+        news = fetch_stock_news(news_tickers, stories=stock_stories_dict)
         print(f"  -> ニュース記事数: {sum(len(v) for v in news.values())}")
 
         # ----------------------------------------------------------
@@ -182,7 +223,7 @@ def main():
             portfolio_data=portfolio_data,
             sim_result=sim_result,
             financial_policy=financial_policy,
-            stock_stories=stock_stories,
+            stock_stories=stock_stories_text,
             news=news,
         )
 
