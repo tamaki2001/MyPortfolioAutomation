@@ -236,8 +236,9 @@ def _estimate_annual_spending(history_df: pd.DataFrame, params: dict) -> float:
     年間支出を推定する。
     history.csv のデータから1年前の実績ベースを検索。なければデフォルト値。
     """
-    # デフォルト: 年間 400万円（月 約33万円）
-    DEFAULT_ANNUAL_SPENDING = 400_0000
+    # デフォルト: 2024年の生活費明細に基づく実績値（約1,225万円）
+    # ※ 総額2,545万円から、妻（浅野紀子/池田紀子）への資産移動・贈与（1,000万, 100万, 110万×2）の計1,320万円を除外した額
+    DEFAULT_ANNUAL_SPENDING = 1225_2536
 
     if history_df.empty or len(history_df) < 2:
         return DEFAULT_ANNUAL_SPENDING
