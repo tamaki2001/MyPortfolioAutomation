@@ -14,9 +14,11 @@ venv/
 .vscode/
 .idea/
 
-# Runtime artifacts (generated on GitHub Actions, not committed)
+# スクリーンショット・グラフはサイズが大きいため Git 管理外
 archives/screenshots/*.png
-archives/reports/*.md
+
+# レポートは Git で管理する（history.csv と同様）
+# archives/reports/*.md  ← コメントアウト：リポジトリで履歴管理する
 
 # history.csv は Git で管理する（Drive アップロード不要）
 # data/history.csv  ← コメントアウト：リポジトリで履歴管理する

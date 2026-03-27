@@ -235,11 +235,12 @@ def main():
 
         report_path = REPORTS_DIR / f"{tag}_report.md"
         report_path.write_text(report_md, encoding="utf-8")
+        print(f"  -> レポート保存: {report_path}")
         try:
             drive.upload_file(str(report_path))
+            print(f"  -> レポート Drive アップロード完了: {report_path.name}")
         except Exception as drive_err:
             print(f"  -> [WARN] レポート Drive アップロードスキップ: {drive_err}")
-        print(f"  -> レポート保存: {report_path}")
 
         # ----------------------------------------------------------
         # Step 7: メール配信
