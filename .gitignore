@@ -26,3 +26,4 @@ venv/
 # Secrets
 .env
 *.json.key
+cookies/
