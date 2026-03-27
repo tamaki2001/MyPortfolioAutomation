@@ -33,6 +33,66 @@ else:
     print("  [FONT] 日本語フォントが見つかりません。DejaVu Sans を使用")
 
 
+def _calculate_safe_spending_limit(current_total: float, params: dict) -> float:
+    """
+    105歳で資産がゼロになるための、初年度（100%期間）の安全な世帯生活費（年間予算）を逆算する。
+    インフレ率2%、運用利回り4% (実質利回り約1.96%) と年金収入の現在価値を加味。
+    """
+    r_nominal = 0.04
+    inflation = 0.02
+    r_real = (1 + r_nominal) / (1 + inflation) - 1
+
+    M = 0
+    PV_pensions = 0
+    
+    tomoaki_age_start = params.get("tomoaki_age", 57)
+    noriko_age_start = params.get("noriko_age", 51)
+    tomoaki_lifespan = params.get("tomoaki_lifespan", 87)
+    noriko_lifespan = params.get("noriko_lifespan", 105)
+    
+    # 紀子様が寿命を迎えるまでの年数
+    years = noriko_lifespan - noriko_age_start + 1
+    
+    for t in range(1, years + 1):
+        age_t = tomoaki_age_start + t - 1
+        age_n = noriko_age_start + t - 1
+        
+        # 支出の現在価値係数
+        rate = 0.50
+        if age_t <= tomoaki_lifespan:
+            for phase in params.get("spending_phases", []):
+                if age_t <= phase["until_tomoaki_age"]:
+                    rate = phase["rate"]
+                    break
+        
+        M += rate / ((1 + r_real) ** (t - 1))
+        
+        # 収入（年金）の現在価値
+        income = 0
+        pension_start = params.get("public_pension_start_age", 65)
+        
+        # 私的年金
+        private_start = 60
+        private_end = 60 + params.get("private_pension_years", 10) - 1
+        if private_start <= age_t <= private_end:
+            income += params.get("private_pension_annual", 0)
+            
+        # 公的年金（夫）
+        if pension_start <= age_t <= tomoaki_lifespan:
+            income += params.get("public_pension_annual", 0)
+            
+        # 公的年金（妻）
+        if age_n >= pension_start:
+            income += params.get("public_pension_annual", 0)
+            
+        PV_pensions += income / ((1 + r_real) ** (t - 1))
+        
+    if M > 0:
+        safe_spending = (current_total + PV_pensions) / M
+        return safe_spending
+    return 0.0
+
+
 def run_simulation(
     portfolio_data: dict,
     history_df: pd.DataFrame,
@@ -40,21 +100,6 @@ def run_simulation(
 ) -> dict:
     """
     資産寿命シミュレーションを実行する。
-
-    Args:
-        portfolio_data: 現在のポートフォリオデータ
-        history_df: 過去の資産推移 DataFrame
-        params: SIMULATION_PARAMS 辞書
-
-    Returns:
-        {
-            "projection": pd.DataFrame,   # 年齢ごとの資産推移
-            "depletion_age": int | None,   # 資産枯渇年齢（None=枯渇しない）
-            "warnings": list[str],         # 警告メッセージ
-            "yoy_change_pct": float | None, # 前年同月比変動率
-            "current_total": float,
-            "annual_spending": float,       # 現在の年間支出額（推定）
-        }
     """
     current_total = portfolio_data["total_value"]
 
@@ -68,8 +113,10 @@ def run_simulation(
         )
 
     # --- 年間支出推定 ---
-    # history.csv から直近12ヶ月の資産減少 + 収入を考慮して推定
     annual_spending = _estimate_annual_spending(history_df, params)
+    
+    # --- 安全な支出上限（予算）の計算 ---
+    safe_spending_limit = _calculate_safe_spending_limit(current_total, params)
 
     # --- リスク資産比率を算出 ---
     stock_val = portfolio_data.get("stock_value", 0)
@@ -97,7 +144,9 @@ def run_simulation(
         "yoy_change_pct": yoy_change_pct,
         "current_total": current_total,
         "annual_spending": annual_spending,
+        "safe_spending_limit": safe_spending_limit,
     }
+
 
 
 def generate_charts(

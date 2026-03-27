@@ -167,7 +167,8 @@ def _build_user_prompt(
 **重要**:
 - 「Ultra C」として、個別株のストーリー乖離を必ず検証し、浅野様の「知識での武装」に対する鋭い問いかけをレポートに含めてください。
 - 上記「銘柄名⇔ストーリーキー対応表」を使い、ポートフォリオの全銘柄（インデックスファンド・投資信託を含む）を分析してください。
-- 各ニュース記事を参照する際は、出典URLをMarkdownリンク形式 [記事タイトル](URL) で記載してください。"""
+- 各ニュース記事を参照する際は、出典URLをMarkdownリンク形式 [記事タイトル](URL) で記載してください。
+- 資産寿命シミュレーションの項目では、「推定年間支出」の他に、「安全に使える年間予算上限 (初年度)」の数値とその意味（インフレ率2%・実質利回り1.96%で、奥様が105歳になるまで段階的に取り崩した場合の今の生活費の余裕）について必ず言及してください。"""
 
 
 # ================================================================
@@ -179,6 +180,7 @@ def _summarize_simulation(sim_result: dict) -> str:
     lines = []
     lines.append(f"- 現在の総資産: {sim_result['current_total']:,.0f} 円")
     lines.append(f"- 推定年間支出: {sim_result['annual_spending']:,.0f} 円")
+    lines.append(f"- 安全に使える年間予算上限 (初年度): {sim_result['safe_spending_limit']:,.0f} 円")
 
     if sim_result["yoy_change_pct"] is not None:
         lines.append(f"- 前年同月比: {sim_result['yoy_change_pct']*100:+.1f}%")
