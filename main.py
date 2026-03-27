@@ -98,7 +98,8 @@ SIMULATION_PARAMS = {
     "noriko_lifespan": 105,
     "private_pension_annual": 80_0000,   # 私的年金 80万/年
     "private_pension_years": 10,          # 私的年金 10年間
-    "public_pension_annual": 240_0000,    # 公的年金 240万/年（終身、75歳～）
+    "tomoaki_public_pension_annual": 282_3714, # 公的年金(智明) 約282万円/年（75歳～、ねんきんネット試算）
+    "noriko_public_pension_annual": 240_0000,  # 公的年金(紀子) 240万円/年（推計、75歳～）
     "public_pension_start_age": 75,       # 公的年金の受給開始年齢
     # 段階的支出モデル（智明の年齢ベース）
     "spending_phases": [

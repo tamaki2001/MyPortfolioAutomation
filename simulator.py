@@ -79,11 +79,11 @@ def _calculate_safe_spending_limit(current_total: float, params: dict) -> float:
             
         # 公的年金（夫）
         if pension_start <= age_t <= tomoaki_lifespan:
-            income += params.get("public_pension_annual", 0)
+            income += params.get("tomoaki_public_pension_annual", 0)
             
         # 公的年金（妻）
         if age_n >= pension_start:
-            income += params.get("public_pension_annual", 0)
+            income += params.get("noriko_public_pension_annual", 0)
             
         PV_pensions += income / ((1 + r_real) ** (t - 1))
         
@@ -265,9 +265,9 @@ def _estimate_annual_spending(history_df: pd.DataFrame, params: dict) -> float:
             noriko_age = params["noriko_age"]
             pension_start = params.get("public_pension_start_age", 65)
             if tomoaki_age >= pension_start and tomoaki_age <= params["tomoaki_lifespan"]:
-                income += params["public_pension_annual"]
+                income += params["tomoaki_public_pension_annual"]
             if noriko_age >= pension_start:
-                income += params["public_pension_annual"]
+                income += params["noriko_public_pension_annual"]
             if 60 <= tomoaki_age < 60 + params["private_pension_years"]:
                 income += params["private_pension_annual"]
 
