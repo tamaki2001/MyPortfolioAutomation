@@ -152,13 +152,14 @@ class DriveHandler:
         )
 
         if existing_id:
-            # 既存ファイルを上書き更新
+            # 既存ファイルを上書き更新（意図しないフォルダにある場合を考慮し addParents を指定）
+            update_kwargs = {"fileId": existing_id, "media_body": media}
+            if folder_id:
+                update_kwargs["addParents"] = folder_id
+                
             file = (
                 self.service.files()
-                .update(
-                    fileId=existing_id,
-                    media_body=media,
-                )
+                .update(**update_kwargs)
                 .execute()
             )
         else:

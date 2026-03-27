@@ -122,8 +122,8 @@ def is_last_day_of_month(d: date) -> bool:
 
 
 def today_tag() -> str:
-    """YYMMDD形式の日付タグを返す。"""
-    return datetime.now().strftime("%y%m%d")
+    """YYMMDD_HHMMSS形式の日付タグを返す（毎回の実行結果を上書きせずに蓄積するため）。"""
+    return datetime.now().strftime("%y%m%d_%H%M%S")
 
 
 # ============================================================
