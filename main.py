@@ -116,6 +116,11 @@ def main():
         )
         print(f"  -> スクリーンショット保存: {screenshot_path}")
         print(f"  -> 銘柄数: {len(portfolio_data['holdings'])}")
+        try:
+            drive.upload_file(str(screenshot_path))
+            print(f"  -> スクリーンショット Drive アップロード完了")
+        except Exception as drive_err:
+            print(f"  -> [WARN] スクリーンショット Drive アップロードスキップ: {drive_err}")
 
         # ----------------------------------------------------------
         # Step 3: history.csv に追記 → Google Drive アップロード
@@ -160,6 +165,12 @@ def main():
             tag=tag,
         )
         print(f"  -> グラフ生成完了: {chart_paths}")
+        for cp in chart_paths:
+            try:
+                drive.upload_file(cp)
+                print(f"  -> シミュレーショングラフ Drive アップロード完了: {Path(cp).name}")
+            except Exception as drive_err:
+                print(f"  -> [WARN] グラフ Drive アップロードスキップ: {drive_err}")
 
         # ----------------------------------------------------------
         # Step 6: レポート生成 (Claude API)
