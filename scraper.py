@@ -321,8 +321,12 @@ def _extract_via_playwright(page: Page) -> dict:
     result = page.evaluate("""() => {
         function num(t) {
             if (!t) return 0;
-            const s = t.replace(/[円,\\s]/g, '').match(/-?[\\d.]+/);
-            return s ? parseFloat(s[0]) : 0;
+            // ▲, △, - を負数として扱う
+            let text = t.replace(/[円,\\s]/g, '');
+            const isNegative = text.includes('▲') || text.includes('△') || text.includes('-');
+            const s = text.match(/[\\d.]+/);
+            const val = s ? parseFloat(s[0]) : 0;
+            return isNegative ? -val : val;
         }
 
         const out = {
@@ -1205,15 +1209,19 @@ def _apply_vt_rule(raw_data: dict, vt_exclude_shares: int) -> dict:
 # ================================================================
 
 def _parse_number(text: str) -> float:
-    """テキストから数値を抽出する。"""
+    """テキストから数値を抽出する。▲, △, - を負数として扱う。"""
     if not text:
         return 0.0
-    cleaned = text.replace("円", "").replace("¥", "").replace("$", "")
-    cleaned = cleaned.replace(",", "").replace(" ", "").strip()
-    match = re.search(r"-?[\d]+\.?\d*", cleaned)
+    cleaned = text.replace("円", "").replace("¥", "").replace("$", "").replace(",", "").replace(" ", "").strip()
+
+    # 負数フラグ
+    is_negative = any(c in cleaned for c in ("▲", "△", "-"))
+
+    match = re.search(r"[\d]+\.?\d*", cleaned)
     if match:
         try:
-            return float(match.group())
+            val = float(match.group())
+            return -val if is_negative else val
         except ValueError:
             return 0.0
     return 0.0

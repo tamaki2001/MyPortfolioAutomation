@@ -251,7 +251,7 @@ class DriveHandler:
 
         for h in portfolio_data.get("holdings", []):
             col_name = f"holding_{h['ticker']}"
-            new_row[col_name] = h["value"]
+            new_row[col_name] = new_row.get(col_name, 0) + h["value"]
 
         for f in portfolio_data.get("funds", []):
             # 投信名は長いので短縮キーを使用

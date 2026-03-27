@@ -136,58 +136,108 @@ def generate_charts(
 # 内部関数
 # ================================================================
 
+def _get_past_row_by_date(history_df: pd.DataFrame, target_date: pd.Timestamp, days_tolerance: int = 45):
+    """
+    指定した日付から約1年前（許容誤差日数内）に最も近いデータを返す。
+    見つからない場合は None を返す。
+    """
+    if history_df.empty:
+        return None
+    
+    df = history_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    
+    # 目標日から1年前
+    one_year_ago = target_date - pd.Timedelta(days=365)
+    
+    # 差分（絶対値）を計算
+    date_diffs = (df["date"] - one_year_ago).abs()
+    
+    # 最も近い日付のインデックス
+    closest_idx = date_diffs.idxmin()
+    
+    # 許容範囲内かチェック
+    if date_diffs[closest_idx].days <= days_tolerance:
+        return df.loc[closest_idx]
+    
+    return None
+
+
 def _calc_yoy_change(history_df: pd.DataFrame, current_total: float) -> float | None:
-    """前年同月比の変動率を算出する。"""
-    if history_df.empty or len(history_df) < 12:
+    """前年同月比の変動率を算出する。日付ベースで1年前のデータを特定する。"""
+    if history_df.empty or len(history_df) < 2:
         return None
 
     try:
-        # 12ヶ月前のデータ
-        past_value = history_df.iloc[-12]["total_value"]
-        if past_value <= 0:
-            return None
-        return (current_total - past_value) / past_value
-    except (IndexError, KeyError):
-        return None
+        current_date = pd.to_datetime(history_df.iloc[-1]["date"])
+        past_row = _get_past_row_by_date(history_df, current_date)
+        
+        if past_row is not None:
+            past_value = past_row["total_value"]
+            if past_value > 0:
+                return (current_total - past_value) / past_value
+    except (IndexError, KeyError, Exception):
+        pass
+
+    return None
 
 
 def _estimate_annual_spending(history_df: pd.DataFrame, params: dict) -> float:
     """
     年間支出を推定する。
-    history.csv のデータが十分にある場合は実績ベース、
-    なければデフォルト値を使用。
+    history.csv のデータから1年前の実績ベースを検索。なければデフォルト値。
     """
     # デフォルト: 年間 400万円（月 約33万円）
     DEFAULT_ANNUAL_SPENDING = 400_0000
 
-    if history_df.empty or len(history_df) < 12:
+    if history_df.empty or len(history_df) < 2:
         return DEFAULT_ANNUAL_SPENDING
 
     try:
-        # 直近12ヶ月の資産減少額 + 推定収入 = 推定支出
-        start_val = history_df.iloc[-12]["total_value"]
-        end_val = history_df.iloc[-1]["total_value"]
+        current_date = pd.to_datetime(history_df.iloc[-1]["date"])
+        past_row = _get_past_row_by_date(history_df, current_date)
 
-        # 年金収入見込み（現在受給中かどうかで分岐）
-        income = 0
-        tomoaki_age = params["tomoaki_age"]
-        noriko_age = params["noriko_age"]
-        pension_start = params.get("public_pension_start_age", 65)
-        if tomoaki_age >= pension_start and tomoaki_age <= params["tomoaki_lifespan"]:
-            income += params["public_pension_annual"]
-        if noriko_age >= pension_start:
-            income += params["public_pension_annual"]
-        if 60 <= tomoaki_age < 60 + params["private_pension_years"]:
-            income += params["private_pension_annual"]
+        if past_row is not None:
+            # 実際の日数差から年率換算するための係数
+            past_date = past_row["date"]
+            days_diff = (current_date - past_date).days
+            if days_diff <= 0:
+                return DEFAULT_ANNUAL_SPENDING
+                
+            annualization_factor = 365.0 / days_diff
 
-        spending = (start_val - end_val) + income
-        # 妥当性チェック: 200万〜1200万の範囲に収まるか
-        if 200_0000 <= spending <= 1200_0000:
-            return spending
-    except (IndexError, KeyError):
+            start_val = past_row["total_value"]
+            end_val = history_df.iloc[-1]["total_value"]
+
+            # 収入計算
+            income = 0
+            tomoaki_age = params["tomoaki_age"]
+            noriko_age = params["noriko_age"]
+            pension_start = params.get("public_pension_start_age", 65)
+            if tomoaki_age >= pension_start and tomoaki_age <= params["tomoaki_lifespan"]:
+                income += params["public_pension_annual"]
+            if noriko_age >= pension_start:
+                income += params["public_pension_annual"]
+            if 60 <= tomoaki_age < 60 + params["private_pension_years"]:
+                income += params["private_pension_annual"]
+
+            # 運用益の概算（簡易的に資産額の4%と仮定して差し引く）
+            estimated_gain = end_val * 0.04
+
+            # 期間中の実質的な支出
+            period_spending = (start_val - end_val) + income + estimated_gain
+            
+            # 年率換算
+            spending = period_spending * annualization_factor
+
+            # 妥当性チェック: 200万〜1500万の範囲に収まるか
+            if 200_0000 <= spending <= 1500_0000:
+                return spending
+    except (IndexError, KeyError, Exception):
         pass
 
     return DEFAULT_ANNUAL_SPENDING
+
 
 
 def _project_assets(
