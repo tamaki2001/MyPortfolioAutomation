@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STORYLINE / 投資仮説管理</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:        #09090E;
+  --surface:   #111218;
+  --surface2:  #181A23;
+  --surface3:  #1E2030;
+  --border:    #252836;
+  --border2:   #32364A;
+  --gold:      #C8A84B;
+  --gold-dim:  #8A7230;
+  --gold-glow: #C8A84B1E;
+  --txt:       #E8E4D8;
+  --txt2:      #9A9DAE;
+  --txt3:      #555868;
+  --us:        #5B9EE0;
+  --jp:        #72BA7A;
+  --fi:        #C8A84B;
+  --fa:        #D4926E;
+  --del:       #D46464;
+  --keep:      #72BA7A;
+  --edit:      #7A8ECC;
+  --mono:  'IBM Plex Mono', monospace;
+  --serif: 'Playfair Display', Georgia, serif;
+  --sans:  'DM Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--txt); font-family: var(--sans); font-size: 17px; line-height: 1.7; overflow: hidden; }
+
+.shell { display: grid; grid-template-columns: 272px 1fr; grid-template-rows: 62px 1fr; height: 100vh; }
+
+/* TOPBAR */
+.topbar { grid-column: 1/-1; display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:var(--surface); border-bottom:1px solid var(--border); }
+.topbar-brand { display:flex; align-items:baseline; gap:12px; }
+.topbar-brand h1 { font-family:var(--serif); font-size:24px; font-weight:400; color:var(--gold); letter-spacing:0.04em; }
+.topbar-brand span { font-family:var(--mono); font-size:14px; color:var(--txt3); letter-spacing:0.1em; text-transform:uppercase; }
+.topbar-actions { display:flex; align-items:center; gap:8px; }
+
+/* SIDEBAR */
+.sidebar { background:var(--surface); border-right:1px solid var(--border); padding:22px 0; display:flex; flex-direction:column; overflow-y:auto; }
+.sidebar-section { padding:0 18px; margin-bottom:28px; }
+.sidebar-label { font-family:var(--mono); font-size:13px; letter-spacing:0.16em; text-transform:uppercase; color:var(--txt3); margin-bottom:10px; padding-left:4px; }
+.stat-block { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:11px 14px; margin-bottom:7px; }
+.stat-num { font-family:var(--mono); font-size:30px; font-weight:500; color:var(--gold); line-height:1; }
+.stat-label { font-size:14px; color:var(--txt2); margin-top:3px; }
+.filter-btn { display:flex; align-items:center; gap:9px; width:100%; padding:8px 12px; background:transparent; border:none; border-radius:5px; color:var(--txt2); cursor:pointer; text-align:left; font-family:var(--sans); font-size:15px; transition:all 0.15s; }
+.filter-btn:hover { background:var(--surface2); color:var(--txt); }
+.filter-btn.active { background:var(--gold-glow); color:var(--gold); }
+.filter-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.filter-count { margin-left:auto; font-family:var(--mono); font-size:14px; color:var(--txt3); }
+
+/* MAIN */
+.main { overflow-y:auto; padding:26px; }
+.main-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; }
+.main-title { font-family:var(--serif); font-size:27px; font-weight:400; color:var(--txt); }
+.main-title em { color:var(--gold); font-style:italic; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:16px; }
+
+/* CARD */
+.card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:20px 22px; transition:border-color 0.2s, background 0.2s; animation:fadeUp 0.3s ease both; position:relative; overflow:hidden; }
+.card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--type-color, var(--border)); }
+.card:hover:not(.editing-card) { border-color:var(--border2); background:var(--surface2); }
+.card.deleted { opacity:0.32; filter:grayscale(0.6); }
+.card.editing-card { border-color:var(--edit); background:var(--surface2); }
+.card.editing-card::before { background:var(--edit); }
+@keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+
+.card-top { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:14px; gap:10px; }
+.card-ticker { font-family:var(--mono); font-size:20px; font-weight:600; color:var(--txt); letter-spacing:0.04em; }
+.card-ticker.fund { font-size:16px; font-weight:400; max-width:260px; line-height:1.4; }
+.card-company { font-size:14px; color:var(--txt2); margin-top:3px; }
+.card-badges { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; }
+.badge { font-family:var(--mono); font-size:12px; letter-spacing:0.07em; padding:3px 10px; border-radius:3px; border:1px solid; }
+.badge-us   { color:var(--us);   border-color:var(--us);   background:#5B9EE010; }
+.badge-jp   { color:var(--jp);   border-color:var(--jp);   background:#72BA7A10; }
+.badge-fi   { color:var(--fi);   border-color:var(--fi);   background:#C8A84B10; }
+.badge-fa   { color:var(--fa);   border-color:var(--fa);   background:#D4926E10; }
+.badge-del  { color:var(--del);  border-color:var(--del);  background:#D4646410; }
+.badge-keep { color:var(--keep); border-color:var(--keep); background:#72BA7A10; }
+.badge-edit { color:var(--edit); border-color:var(--edit); background:#7A8ECC10; }
+
+.card-actions { display:flex; gap:5px; flex-direction:column; align-items:flex-end; flex-shrink:0; }
+.icon-btn { width:34px; height:34px; border-radius:5px; border:1px solid var(--border2); background:transparent; color:var(--txt2); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s; font-size:17px; }
+.icon-btn:hover { background:var(--surface3); color:var(--txt); }
+.icon-btn.danger:hover   { border-color:var(--del);  color:var(--del);  background:#D4646410; }
+.icon-btn.restore:hover  { border-color:var(--keep); color:var(--keep); background:#72BA7A10; }
+.icon-btn.edit-btn:hover { border-color:var(--edit); color:var(--edit); background:#7A8ECC10; }
+
+.divider { border:none; border-top:1px solid var(--border); margin:14px 0; }
+.field-label { font-family:var(--mono); font-size:13px; letter-spacing:0.13em; text-transform:uppercase; color:var(--txt3); margin-bottom:5px; margin-top:14px; }
+.field-val { font-size:15px; color:var(--txt2); line-height:1.7; }
+.bullet-list { list-style:none; }
+.bullet-list li { font-size:15px; color:var(--txt2); line-height:1.6; padding:3px 0; display:flex; gap:8px; }
+.bullet-list li::before { content:'—'; color:var(--txt3); flex-shrink:0; }
+.card-date { font-family:var(--mono); font-size:13px; color:var(--txt3); margin-top:12px; }
+
+/* EDIT MODE FIELDS */
+.edit-field-label { font-family:var(--mono); font-size:13px; letter-spacing:0.13em; text-transform:uppercase; color:var(--txt3); margin-bottom:5px; margin-top:14px; }
+.edit-field-label span { font-family:var(--sans); font-weight:300; text-transform:none; letter-spacing:0; font-size:14px; color:var(--txt3); }
+textarea.edit-input, input.edit-input { width:100%; background:var(--surface3); border:1px solid var(--border2); border-radius:5px; padding:10px 14px; color:var(--txt); font-family:var(--sans); font-size:15px; line-height:1.65; outline:none; transition:border-color 0.15s; resize:vertical; }
+textarea.edit-input:focus, input.edit-input:focus { border-color:var(--edit); }
+textarea.edit-input::placeholder, input.edit-input::placeholder { color:var(--txt3); }
+.edit-hint { font-size:13px; color:var(--txt3); margin-top:4px; font-style:italic; }
+.edit-actions { display:flex; gap:8px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
+
+/* BUTTONS */
+.btn { font-family:var(--mono); font-size:14px; letter-spacing:0.05em; padding:9px 20px; border-radius:5px; cursor:pointer; border:1px solid var(--border2); background:transparent; color:var(--txt2); transition:all 0.15s; white-space:nowrap; }
+.btn:hover { background:var(--surface3); color:var(--txt); }
+.btn-gold    { border-color:var(--gold-dim); color:var(--gold); background:var(--gold-glow); }
+.btn-gold:hover { background:#C8A84B20; border-color:var(--gold); }
+.btn-save    { border-color:var(--edit); color:var(--edit); background:#7A8ECC12; }
+.btn-save:hover { background:#7A8ECC22; border-color:#9AAAE0; }
+.btn-confirm { border-color:var(--keep); color:var(--keep); background:#72BA7A12; }
+.btn-confirm:hover { background:#72BA7A22; }
+.btn-cancel  { border-color:var(--border2); color:var(--txt3); }
+
+/* ADD PANEL */
+.add-panel { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:22px 26px; margin-bottom:22px; }
+.add-panel-header { font-family:var(--serif); font-size:19px; font-weight:400; color:var(--txt2); margin-bottom:18px; }
+.add-panel-header span { color:var(--gold); font-style:italic; }
+.form-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+.form-group { display:flex; flex-direction:column; gap:5px; flex:1; min-width:150px; }
+.form-group label { font-family:var(--mono); font-size:13px; letter-spacing:0.12em; text-transform:uppercase; color:var(--txt3); }
+input[type=text], select { background:var(--surface2); border:1px solid var(--border2); border-radius:5px; padding:10px 14px; color:var(--txt); font-family:var(--mono); font-size:15px; outline:none; transition:border-color 0.15s; width:100%; }
+input[type=text]:focus, select:focus { border-color:var(--gold-dim); }
+input[type=text]::placeholder { color:var(--txt3); }
+select option { background:var(--surface2); }
+
+/* GENERATE STATUS */
+.gen-status { margin-top:14px; }
+.gen-msg { font-family:var(--mono); font-size:14px; color:var(--txt2); padding:8px 0; display:flex; align-items:center; gap:10px; }
+.spinner { width:13px; height:13px; border:1.5px solid var(--border2); border-top-color:var(--gold); border-radius:50%; animation:spin 0.8s linear infinite; flex-shrink:0; }
+@keyframes spin { to{transform:rotate(360deg)} }
+.gen-error { color:var(--del); font-family:var(--mono); font-size:14px; padding:8px 0; }
+
+/* PREVIEW CARD */
+.preview-card { background:var(--surface2); border:1px solid var(--gold-dim); border-radius:8px; padding:20px 24px; margin-top:14px; animation:fadeUp 0.25s ease; }
+.preview-header { display:flex; align-items:center; gap:10px; margin-bottom:5px; }
+.preview-ticker-label { font-family:var(--mono); font-size:18px; font-weight:600; }
+.preview-sub { font-size:14px; color:var(--txt3); margin-bottom:4px; font-style:italic; }
+.preview-actions { display:flex; gap:8px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); }
+
+/* MISC */
+.empty { text-align:center; padding:70px 20px; color:var(--txt3); font-family:var(--mono); font-size:15px; letter-spacing:0.08em; }
+.file-label { font-family:var(--mono); font-size:14px; letter-spacing:0.05em; padding:9px 20px; border-radius:5px; cursor:pointer; border:1px solid var(--border2); color:var(--txt2); transition:all 0.15s; white-space:nowrap; }
+.file-label:hover { background:var(--surface3); color:var(--txt); }
+::-webkit-scrollbar { width:4px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--border2); border-radius:2px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header class="topbar">
+    <div class="topbar-brand">
+      <h1>STORYLINE</h1>
+      <span>投資仮説管理システム</span>
+    </div>
+    <div class="topbar-actions">
+      <label class="file-label">↑ JSON読込<input type="file" accept=".json" id="fileInput" style="display:none" onchange="loadJSON(event)"></label>
+      <button class="btn" onclick="exportJSON()">↓ エクスポート</button>
+    </div>
+  </header>
+
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">ポートフォリオ</div>
+      <div class="stat-block"><div class="stat-num" id="statTotal">—</div><div class="stat-label">登録銘柄数</div></div>
+      <div class="stat-block"><div class="stat-num" id="statDel" style="color:var(--del)">—</div><div class="stat-label">削除予定</div></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">フィルター</div>
+      <button class="filter-btn active" onclick="setFilter('all',this)"><span class="filter-dot" style="background:var(--txt3)"></span>すべて<span class="filter-count" id="cnt-all">0</span></button>
+      <button class="filter-btn" onclick="setFilter('us_stock',this)"><span class="filter-dot" style="background:var(--us)"></span>米国個別株<span class="filter-count" id="cnt-us_stock">0</span></button>
+      <button class="filter-btn" onclick="setFilter('jp_stock',this)"><span class="filter-dot" style="background:var(--jp)"></span>日本個別株<span class="filter-count" id="cnt-jp_stock">0</span></button>
+      <button class="filter-btn" onclick="setFilter('fund_index',this)"><span class="filter-dot" style="background:var(--fi)"></span>インデックスF<span class="filter-count" id="cnt-fund_index">0</span></button>
+      <button class="filter-btn" onclick="setFilter('fund_active',this)"><span class="filter-dot" style="background:var(--fa)"></span>アクティブF<span class="filter-count" id="cnt-fund_active">0</span></button>
+    </div>
+    <div class="sidebar-section" style="margin-top:auto">
+      <div class="sidebar-label">System</div>
+      <div style="font-family:var(--mono);font-size:13px;color:var(--txt3);line-height:2;padding-left:4px;">stock_stories.json<br>Claude Sonnet 4<br>Anthropic API</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="add-panel">
+      <div class="add-panel-header">新規 <span>ストーリーライン</span> を追加</div>
+      <div class="form-row">
+        <div class="form-group" style="max-width:190px;">
+          <label>資産種別</label>
+          <select id="newType" onchange="updateHint()">
+            <option value="us_stock">米国個別株</option>
+            <option value="jp_stock">日本個別株</option>
+            <option value="fund_index">インデックスファンド</option>
+            <option value="fund_active">アクティブファンド</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label id="tickerLabel">ティッカーシンボル</label>
+          <input type="text" id="newTicker" placeholder="例: NVDA" onkeydown="if(event.key==='Enter')startGenerate()" oninput="if(document.getElementById('newType').value==='us_stock')this.value=this.value.toUpperCase()">
+        </div>
+        <div class="form-group" style="flex:0;">
+          <button class="btn btn-gold" onclick="startGenerate()" style="height:40px;padding:0 20px;">Claude で生成 →</button>
+        </div>
+      </div>
+      <div id="genStatus"></div>
+      <div id="previewArea"></div>
+    </div>
+
+    <div class="main-header">
+      <div class="main-title" id="mainTitle">すべての <em>ストーリー</em></div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </main>
+</div>
+
+<script>
+const INIT = {
+  "LLY":{"ticker":"LLY","asset_type":"us_stock","company":"Eli Lilly and Company","thesis":"GLP-1受容体作動薬（Mounjaro/Zepbound）の肥満治療市場における圧倒的成長ポテンシャル。NVO（Novo Nordisk）との競争で優位性を維持できるかが鍵。","key_metrics":["Mounjaro/Zepbound の売上成長率","NVO の Wegovy/Ozempic との市場シェア比較","パイプライン（orforglipron 等の経口GLP-1）の進捗"],"exit_conditions":["NVO に市場シェアで大幅に逆転された場合","GLP-1市場全体の成長鈍化","重大な安全性問題の発覚"],"added_date":"2024-01-01","notes":"競合 NVO との比較を常に意識すること"},
+  "ISRG":{"ticker":"ISRG","asset_type":"us_stock","company":"Intuitive Surgical, Inc.","thesis":"手術支援ロボット da Vinci の圧倒的市場シェアと、消耗品ビジネスによるリカーリング収益モデル。新規参入者（Medtronic Hugo等）に対するモート（堀）の持続性が鍵。","key_metrics":["da Vinci 設置台数の伸び","手術件数（プロシージャ数）の成長率","競合ロボット（Hugo, Versius等）のシェア獲得状況"],"exit_conditions":["競合にシェアを10%以上奪われた場合","主要市場での価格競争激化","規制リスクの顕在化"],"added_date":"2024-01-01","notes":"シェア維持が最重要指標"},
+  "NVDA":{"ticker":"NVDA","asset_type":"us_stock","company":"NVIDIA Corporation","thesis":"AI学習・推論に不可欠なGPUのデファクトスタンダードとして、データセンター需要の爆発的成長の最大受益者。CUDAエコシステムによる強固な参入障壁が持続的優位性の源泉。","key_metrics":["データセンター部門の四半期売上成長率","H100/B200の出荷台数と受注残","AMD・Intel・カスタムASICのシェア動向"],"exit_conditions":["大手クラウド企業による自社チップへの大規模移行","CUDA代替エコシステムの台頭","データセンター投資サイクルの急減速"],"added_date":"2024-01-01","notes":"含み益1,200%超。ポジションサイズの定期的な見直しが必要"},
+  "MSFT":{"ticker":"MSFT","asset_type":"us_stock","company":"Microsoft Corporation","thesis":"Azure クラウドと OpenAI への戦略的投資により、企業向け AI インフラのプラットフォームとして確固たる地位を構築。Copilot の収益化が次の成長ドライバー。","key_metrics":["Azure の売上成長率（前年比）","Copilot の有料ユーザー数・ARPU","クラウド部門の営業利益率"],"exit_conditions":["Azure のシェアが AWS に大幅逆転された場合","OpenAI との関係悪化・競合化","企業向けAI投資のROI懐疑論が広がった場合"],"added_date":"2024-01-01","notes":"含み益約199%。安定した現金創出力が下支え"},
+  "GOOG":{"ticker":"GOOG","asset_type":"us_stock","company":"Alphabet Inc. (Class C)","thesis":"検索広告のデファクト独占と Google Cloud の成長が二本柱。AI（Gemini）による検索体験の変革が脅威にも機会にもなりうる両刃の剣。","key_metrics":["検索広告売上の成長率","Google Cloud 売上成長率と営業利益率","AI Overview による検索単価（RPM）への影響"],"exit_conditions":["OpenAI/Perplexity 等が検索市場シェアを10%超奪取した場合","規制当局による検索・広告事業の強制分離","AI検索移行による広告単価の構造的低下"],"added_date":"2024-01-01","notes":"現在含み損。AI検索移行リスクの継続モニタリングが必須"},
+  "AVGO":{"ticker":"AVGO","asset_type":"us_stock","company":"Broadcom Inc.","thesis":"カスタムAIチップ（XPU）設計とネットワーキング半導体で、AI推論インフラの重要部品を担う。VMware統合による企業向けソフトウェアビジネスの拡大も成長加速要因。","key_metrics":["AIセミコンダクター部門の売上（Google/Meta向けXPU）","VMware統合の進捗と解約率","ネットワーキング製品の市場シェア"],"exit_conditions":["主要顧客（Google/Meta）による内製化の加速","VMware統合コストの予想超過","半導体サイクル悪化による設備投資削減"],"added_date":"2024-01-01","notes":"AI半導体エクスポージャーとして NVDA の補完的役割"},
+  "COST":{"ticker":"COST","asset_type":"us_stock","company":"Costco Wholesale Corporation","thesis":"会員制ビジネスモデルによる安定したリカーリング収益と、圧倒的な低コスト運営が生み出す価格競争力。インフレ環境下でも会員更新率が95%超を維持する卓越した顧客ロイヤリティ。","key_metrics":["会員更新率（目標95%以上維持）","既存店売上成長率（コンパラブル・セールス）","会員数の純増ペース（特に海外）"],"exit_conditions":["会員更新率が93%を下回った場合","Amazon/Walmart による会員制モデルの本格侵食","中産階級の購買力低下による既存店売上の構造的鈍化"],"added_date":"2024-01-01","notes":"現在含み損。高バリュエーションが常にリスク要因"},
+  "8136":{"ticker":"8136","asset_type":"jp_stock","company":"サンリオ株式会社","thesis":"ハローキティを中心とした IP ポートフォリオのグローバル展開と、辻信太郎 CEO 就任後の V字回復が継続中。ライセンス収益モデルへのシフトが収益性を劇的に改善。","key_metrics":["IPライセンス収益の成長率","海外売上比率（特にアジア・欧米）","テーマパーク来場者数と物販単価"],"exit_conditions":["ハローキティ等主要IPの人気衰退の兆候","後継IP育成の失敗","海外展開の失速（特に中国市場）"],"added_date":"2024-01-01","notes":"コンテンツIPのグローバル展開において稀有な日本株の事例"},
+  "eMAXIS_Slim_全世界":{"ticker":"eMAXIS_Slim_全世界","asset_type":"fund_index","company":"三菱UFJアセットマネジメント","product_name":"eMAXIS Slim 全世界株式（オール・カントリー）","thesis":"MSCI ACWI に連動する世界最低水準の信託報酬（0.05775%）インデックスファンド。全世界の経済成長を最小コストで享受する長期積立のコアポジション。乗り換えるべき競合は現時点で存在しない。","key_metrics":["信託報酬率（競合との比較）","純資産総額の推移（2兆円超維持）","ベンチマーク（MSCI ACWI）との乖離率"],"exit_conditions":["より低コストな同カテゴリファンドの登場（信託報酬0.04%以下）","運用方針・ベンチマークの重大変更","三菱UFJによる繰上償還リスクの顕在化"],"added_date":"2024-01-01","notes":"現在3口座合計で保有。「ストーリー逸脱」より「乗り換えコスト試算」で判断"},
+  "VT":{"ticker":"VT","asset_type":"fund_index","company":"Vanguard","product_name":"Vanguard Total World Stock ETF","thesis":"全世界株式に連動するバンガードのETF。現在93株を保有（478株はVT特殊ルールで米ドル現金として管理）。長期インデックス戦略の米国口座側コアポジション。","key_metrics":["経費率（0.07%）の水準維持","純資産総額と流動性","FTSE Global All Cap Index との乖離"],"exit_conditions":["経費率の大幅引き上げ","より低コストな代替ETFの登場","円建て資産へのリバランス判断"],"added_date":"2024-01-01","notes":"478株は米ドル現金として管理（VT特殊ルール）。93株が投資ポジション"}
+};
+
+let stories = JSON.parse(JSON.stringify(INIT));
+let deleted  = new Set();
+let editing  = new Set();
+let filter   = 'all';
+let pending  = null;
+
+const TYPE_LABELS = { us_stock:'US STOCK', jp_stock:'JP STOCK', fund_index:'INDEX FUND', fund_active:'ACTIVE FUND' };
+const TYPE_CSS    = { us_stock:'badge-us',  jp_stock:'badge-jp',  fund_index:'badge-fi',    fund_active:'badge-fa' };
+const TYPE_COLOR  = { us_stock:'var(--us)', jp_stock:'var(--jp)', fund_index:'var(--fi)',    fund_active:'var(--fa)' };
+
+const HINTS = {
+  us_stock:   { label:'ティッカーシンボル', placeholder:'例: NVDA' },
+  jp_stock:   { label:'証券コード / 略称',  placeholder:'例: 7203' },
+  fund_index: { label:'スラッグ識別子',      placeholder:'例: eMAXIS_Slim_新興国' },
+  fund_active:{ label:'スラッグ識別子',      placeholder:'例: hifumi' }
+};
+
+const SYSPROMPTS = {
+  us_stock:   `あなたは長期投資家向けの投資アナリストです。米国個別株の投資仮説をJSON形式のみで出力してください。前置き・後書き・コードブロック(\`\`\`)は不要です。純粋なJSONのみ返してください。\nフォーマット: {"company":"企業正式名称(英語)","thesis":"投資仮説2〜3文","key_metrics":["指標1","指標2","指標3"],"exit_conditions":["条件1","条件2","条件3"],"notes":"補足1〜2文"}`,
+  jp_stock:   `あなたは長期投資家向けの投資アナリストです。日本個別株の投資仮説をJSON形式のみで出力してください。前置き・後書き・コードブロック(\`\`\`)は不要です。純粋なJSONのみ返してください。\nフォーマット: {"company":"企業正式名称(日本語)","thesis":"投資仮説2〜3文","key_metrics":["指標1","指標2","指標3"],"exit_conditions":["条件1","条件2","条件3"],"notes":"補足1〜2文"}`,
+  fund_index: `あなたは長期投資家向けのファンドアナリストです。インデックスファンドの保有継続仮説をJSON形式のみで出力してください。前置き・後書き・コードブロック(\`\`\`)は不要です。純粋なJSONのみ返してください。\nフォーマット: {"company":"運用会社名","product_name":"ファンド正式名称","thesis":"保有継続仮説2〜3文","key_metrics":["信託報酬と競合比較","純資産総額推移","ベンチマーク乖離率"],"exit_conditions":["より低コストな同カテゴリFの登場","運用方針の重大変更","投資カテゴリの戦略的見直し"],"notes":"乗り換え閾値など補足1〜2文"}`,
+  fund_active:`あなたは長期投資家向けのファンドアナリストです。アクティブファンドの保有継続仮説をJSON形式のみで出力してください。前置き・後書き・コードブロック(\`\`\`)は不要です。純粋なJSONのみ返してください。\nフォーマット: {"company":"運用会社名","product_name":"ファンド正式名称","thesis":"保有継続仮説2〜3文","key_metrics":["超過リターン（3年・5年）","信託報酬","ファンドマネージャーの継続性"],"exit_conditions":["継続的アンダーパフォーム","主要FM交代","運用哲学の方針転換"],"notes":"インデックスFへの乗り換え条件など補足1〜2文"}`
+};
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function listToLines(arr) { return (arr||[]).join('\n'); }
+function linesToList(str) { return str.split('\n').map(s=>s.trim()).filter(Boolean); }
+
+// ── RENDER ────────────────────────────────────────────────
+function render() {
+  const grid = document.getElementById('grid');
+  let entries = Object.entries(stories);
+  if (filter !== 'all') entries = entries.filter(([,s]) => (s.asset_type||'us_stock') === filter);
+  grid.innerHTML = entries.length
+    ? entries.map(([tk,s],i) => editing.has(tk) ? cardEditHTML(tk,s,i) : cardViewHTML(tk,s,i)).join('')
+    : '<div class="empty">// 該当する銘柄がありません</div>';
+  updateSidebar(); updateTitle();
+}
+
+// ── VIEW CARD ─────────────────────────────────────────────
+function cardViewHTML(tk, s, i) {
+  const del = deleted.has(tk), at = s.asset_type||'us_stock';
+  const isFund = at.startsWith('fund');
+  const disp = isFund && s.product_name ? s.product_name : tk;
+  return `<div class="card ${del?'deleted':''}" id="card-${esc(tk)}" style="--type-color:${TYPE_COLOR[at]};animation-delay:${Math.min(i*35,350)}ms">
+    <div class="card-top">
+      <div class="card-identity">
+        <div class="card-ticker${isFund?' fund':''}">${esc(disp)}</div>
+        <div class="card-company">${esc(s.company||'')}</div>
+        <div class="card-badges">
+          <span class="badge ${TYPE_CSS[at]}">${TYPE_LABELS[at]}</span>
+          <span class="badge ${del?'badge-del':'badge-keep'}">${del?'REMOVE':'HOLD'}</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="icon-btn edit-btn" onclick="startEdit('${esc(tk)}')" title="編集">✎</button>
+        <button class="icon-btn ${del?'restore':'danger'}" onclick="toggleDel('${esc(tk)}')" title="${del?'保持':'削除予定'}">${del?'↩':'✕'}</button>
+      </div>
+    </div>
+    <hr class="divider">
+    <div class="field-label">Thesis</div>
+    <div class="field-val">${esc(s.thesis||'—')}</div>
+    <div class="field-label">Key Metrics</div>
+    <ul class="bullet-list">${(s.key_metrics||[]).map(m=>`<li>${esc(m)}</li>`).join('')}</ul>
+    <div class="field-label">Exit Conditions</div>
+    <ul class="bullet-list">${(s.exit_conditions||[]).map(c=>`<li>${esc(c)}</li>`).join('')}</ul>
+    ${s.notes?`<div class="field-label">Notes</div><div class="field-val">${esc(s.notes)}</div>`:''}
+    <div class="card-date">${esc(s.added_date||'')}</div>
+  </div>`;
+}
+
+// ── EDIT CARD ─────────────────────────────────────────────
+function cardEditHTML(tk, s, i) {
+  const at = s.asset_type||'us_stock';
+  const isFund = at.startsWith('fund');
+  const disp = isFund && s.product_name ? s.product_name : tk;
+  const safeId = tk.replace(/[^a-zA-Z0-9_]/g,'_');
+  return `<div class="card editing-card" id="card-${esc(tk)}" style="--type-color:${TYPE_COLOR[at]};animation-delay:${Math.min(i*35,350)}ms">
+    <div class="card-top">
+      <div class="card-identity">
+        <div class="card-ticker${isFund?' fund':''}">${esc(disp)}</div>
+        <div class="card-company">${esc(s.company||'')}</div>
+        <div class="card-badges">
+          <span class="badge ${TYPE_CSS[at]}">${TYPE_LABELS[at]}</span>
+          <span class="badge badge-edit">EDITING</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        <button class="icon-btn" onclick="cancelEdit('${esc(tk)}')" title="キャンセル" style="font-size:12px;color:var(--txt3)">✕</button>
+      </div>
+    </div>
+    <hr class="divider">
+
+    <div class="edit-field-label">Company <span>/ 企業・運用会社名</span></div>
+    <input class="edit-input" id="e_company_${safeId}" type="text" value="${esc(s.company||'')}">
+
+    ${isFund?`<div class="edit-field-label">Product Name <span>/ ファンド正式名称</span></div>
+    <input class="edit-input" id="e_product_${safeId}" type="text" value="${esc(s.product_name||'')}">`:``}
+
+    <div class="edit-field-label">Thesis <span>/ 投資仮説</span></div>
+    <textarea class="edit-input" id="e_thesis_${safeId}" rows="4">${esc(s.thesis||'')}</textarea>
+
+    <div class="edit-field-label">Key Metrics <span>/ 1行 = 1指標</span></div>
+    <textarea class="edit-input" id="e_metrics_${safeId}" rows="4">${esc(listToLines(s.key_metrics))}</textarea>
+
+    <div class="edit-field-label">Exit Conditions <span>/ 1行 = 1条件</span></div>
+    <textarea class="edit-input" id="e_exits_${safeId}" rows="4">${esc(listToLines(s.exit_conditions))}</textarea>
+
+    <div class="edit-field-label">Notes <span>/ 補足メモ（任意）</span></div>
+    <textarea class="edit-input" id="e_notes_${safeId}" rows="2">${esc(s.notes||'')}</textarea>
+
+    <div class="edit-actions">
+      <button class="btn btn-save" onclick="saveEdit('${esc(tk)}')">✓ 保存</button>
+      <button class="btn btn-cancel" onclick="cancelEdit('${esc(tk)}')">キャンセル</button>
+    </div>
+  </div>`;
+}
+
+// ── EDIT OPS ──────────────────────────────────────────────
+function startEdit(tk) {
+  editing.add(tk); render();
+  setTimeout(()=>{ const el=document.getElementById('card-'+tk); if(el) el.scrollIntoView({behavior:'smooth',block:'nearest'}); },60);
+}
+function cancelEdit(tk) { editing.delete(tk); render(); }
+function saveEdit(tk) {
+  const s = stories[tk]; if(!s) return;
+  const isFund = (s.asset_type||'us_stock').startsWith('fund');
+  const id = tk.replace(/[^a-zA-Z0-9_]/g,'_');
+  const g = (suffix) => document.getElementById(`e_${suffix}_${id}`);
+  s.company       = g('company')?.value.trim() || s.company;
+  s.thesis        = g('thesis')?.value.trim()  || s.thesis;
+  s.key_metrics   = linesToList(g('metrics')?.value || '');
+  s.exit_conditions = linesToList(g('exits')?.value || '');
+  s.notes         = g('notes')?.value.trim() || '';
+  if(isFund) s.product_name = g('product')?.value.trim() || s.product_name;
+  editing.delete(tk); render();
+}
+
+// ── SIDEBAR / TITLE ───────────────────────────────────────
+function updateSidebar() {
+  const c={all:0,us_stock:0,jp_stock:0,fund_index:0,fund_active:0};
+  Object.values(stories).forEach(s=>{c.all++;const t=s.asset_type||'us_stock';c[t]=(c[t]||0)+1;});
+  Object.keys(c).forEach(k=>{const el=document.getElementById('cnt-'+k);if(el)el.textContent=c[k];});
+  document.getElementById('statTotal').textContent=c.all;
+  document.getElementById('statDel').textContent=deleted.size;
+}
+const TITLE_MAP={all:'すべての',us_stock:'米国株の',jp_stock:'日本株の',fund_index:'インデックスFの',fund_active:'アクティブFの'};
+function updateTitle(){document.getElementById('mainTitle').innerHTML=`${TITLE_MAP[filter]||''} <em>ストーリー</em>`;}
+
+function setFilter(f,btn){filter=f;document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');render();}
+function toggleDel(tk){if(deleted.has(tk))deleted.delete(tk);else deleted.add(tk);render();}
+function updateHint(){const t=document.getElementById('newType').value,h=HINTS[t];document.getElementById('tickerLabel').textContent=h.label;document.getElementById('newTicker').placeholder=h.placeholder;}
+
+// ── GENERATE ──────────────────────────────────────────────
+async function startGenerate() {
+  const type=document.getElementById('newType').value;
+  const tk=document.getElementById('newTicker').value.trim();
+  if(!tk){document.getElementById('newTicker').focus();return;}
+  if(stories[tk]){showGenError(`"${tk}" はすでに登録されています。`);return;}
+  const stEl=document.getElementById('genStatus');
+  document.getElementById('previewArea').innerHTML='';pending=null;
+  stEl.innerHTML=`<div class="gen-msg"><div class="spinner"></div>Claude がストーリーラインを生成中 — <span style="color:var(--gold);font-family:var(--mono)">${esc(tk)}</span></div>`;
+  try {
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:SYSPROMPTS[type],
+        messages:[{role:'user',content:`銘柄/ファンド識別子: ${tk}\nストーリーラインをJSON形式で作成してください。`}]})});
+    const d=await res.json();
+    if(d.error) throw new Error(d.error.message);
+    const text=d.content[0].text.trim().replace(/^```json\s*/,'').replace(/\s*```$/,'');
+    const p=JSON.parse(text);
+    pending={ticker:tk,asset_type:type,...p,added_date:new Date().toISOString().split('T')[0]};
+    stEl.innerHTML='';showEditablePreview(tk,type,pending);
+  } catch(err){showGenError('生成エラー: '+err.message);}
+}
+
+function showEditablePreview(tk, type, p) {
+  const isFund=type.startsWith('fund');
+  document.getElementById('previewArea').innerHTML=`
+  <div class="preview-card">
+    <div class="preview-header">
+      <span class="preview-ticker-label" style="color:${TYPE_COLOR[type]}">${esc(tk)}</span>
+      <span class="badge ${TYPE_CSS[type]}">${TYPE_LABELS[type]}</span>
+    </div>
+    <div class="preview-sub">Claude が生成しました。必要に応じて編集してから追加してください。</div>
+
+    <div class="edit-field-label">Company <span>/ 企業・運用会社名</span></div>
+    <input class="edit-input" id="p_company" type="text" value="${esc(p.company||'')}">
+
+    ${isFund?`<div class="edit-field-label">Product Name <span>/ ファンド正式名称</span></div>
+    <input class="edit-input" id="p_product" type="text" value="${esc(p.product_name||'')}">`:``}
+
+    <div class="edit-field-label">Thesis <span>/ 投資仮説</span></div>
+    <textarea class="edit-input" id="p_thesis" rows="4">${esc(p.thesis||'')}</textarea>
+
+    <div class="edit-field-label">Key Metrics <span>/ 1行 = 1指標</span></div>
+    <textarea class="edit-input" id="p_metrics" rows="4">${esc(listToLines(p.key_metrics))}</textarea>
+
+    <div class="edit-field-label">Exit Conditions <span>/ 1行 = 1条件</span></div>
+    <textarea class="edit-input" id="p_exits" rows="4">${esc(listToLines(p.exit_conditions))}</textarea>
+
+    <div class="edit-field-label">Notes <span>/ 補足メモ（任意）</span></div>
+    <textarea class="edit-input" id="p_notes" rows="2">${esc(p.notes||'')}</textarea>
+
+    <div class="preview-actions">
+      <button class="btn btn-confirm" onclick="confirmAdd()">✓ このストーリーで追加</button>
+      <button class="btn btn-cancel"  onclick="cancelAdd()">キャンセル</button>
+    </div>
+  </div>`;
+}
+
+function showGenError(msg){document.getElementById('genStatus').innerHTML=`<div class="gen-error">// ${esc(msg)}</div>`;}
+
+function confirmAdd() {
+  if(!pending) return;
+  const isFund=pending.asset_type.startsWith('fund');
+  pending.company       = document.getElementById('p_company')?.value.trim()  || pending.company;
+  pending.thesis        = document.getElementById('p_thesis')?.value.trim()   || pending.thesis;
+  pending.key_metrics   = linesToList(document.getElementById('p_metrics')?.value||'');
+  pending.exit_conditions=linesToList(document.getElementById('p_exits')?.value||'');
+  pending.notes         = document.getElementById('p_notes')?.value.trim()    || '';
+  if(isFund) pending.product_name=document.getElementById('p_product')?.value.trim()||pending.product_name;
+  stories[pending.ticker]=pending;
+  document.getElementById('newTicker').value='';
+  document.getElementById('genStatus').innerHTML='';
+  document.getElementById('previewArea').innerHTML='';
+  pending=null;filter='all';
+  document.querySelectorAll('.filter-btn').forEach((b,i)=>b.classList.toggle('active',i===0));
+  render();
+}
+
+function cancelAdd(){document.getElementById('newTicker').value='';document.getElementById('genStatus').innerHTML='';document.getElementById('previewArea').innerHTML='';pending=null;}
+
+function loadJSON(e){
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{try{stories=JSON.parse(ev.target.result);deleted=new Set();editing=new Set();render();}catch{alert('JSONの解析に失敗しました。');}};
+  r.readAsText(f);
+}
+
+function exportJSON(){
+  const out={};
+  Object.entries(stories).forEach(([tk,s])=>{if(!deleted.has(tk))out[tk]=s;});
+  const blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='stock_stories.json';a.click();URL.revokeObjectURL(url);
+}
+
+render();
+</script>
+</body>
+</html>
