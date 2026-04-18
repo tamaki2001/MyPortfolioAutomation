@@ -28,10 +28,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
 
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload report artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: portfolio-report-${{ github.run_id }}
           path: |
@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload debug artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: debug-screenshots-${{ github.run_id }}
           path: debug-output/
