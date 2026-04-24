@@ -70,7 +70,7 @@ if not creds.refresh_token:
     sys.exit(1)
 
 print("\n" + "=" * 65)
-print("✅ 認証成功！以下の値を GitHub Secrets に設定してください")
+print("OK: 認証成功！以下の値を GitHub Secrets に設定してください")
 print("=" * 65)
 print(f"\n  Secret名: GOOGLE_OAUTH_CLIENT_ID")
 print(f"  値:       {CLIENT_ID}")

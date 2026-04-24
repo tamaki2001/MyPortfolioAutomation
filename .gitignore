@@ -27,3 +27,7 @@ venv/
 .env
 *.json.key
 cookies/
+
+# Claude Code ローカル設定
+.claude/
+run_now.bat

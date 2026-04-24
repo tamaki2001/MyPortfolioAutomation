@@ -17,7 +17,7 @@ from datetime import datetime
 import anthropic
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-MODEL = "claude-sonnet-4-20250514"  # Claude Sonnet 4
+MODEL = "claude-sonnet-4-5"  # Claude Sonnet 4.5 (エイリアス。最新安定版を指す)
 MAX_TOKENS = 8192
 
 

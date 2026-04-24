@@ -23,7 +23,7 @@ GitHub Actionsで毎月末に自動実行される。
 main.py               # エントリーポイント・オーケストレーション
 scraper.py             # MoneyForward ME スクレイパー（Playwright）
 drive_handler.py       # Google Drive API連携（OAuth2）
-report_generator.py    # Claude APIレポート生成（claude-sonnet-4）
+report_generator.py    # Claude APIレポート生成（claude-sonnet-4-5）
 simulator.py           # 資産寿命シミュレーション・グラフ描画
 mailer.py              # Gmail SMTP配信
 news_fetcher.py        # Yahoo Finance RSSニュース取得

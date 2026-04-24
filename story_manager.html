@@ -164,6 +164,7 @@ select option { background:var(--surface2); }
       <span>投資仮説管理システム</span>
     </div>
     <div class="topbar-actions">
+      <input type="password" id="apiKeyInput" placeholder="Anthropic API Key (sk-ant-...)" style="background:var(--surface2);border:1px solid var(--border2);border-radius:5px;padding:8px 14px;color:var(--txt);font-family:var(--mono);font-size:13px;outline:none;width:280px;" oninput="localStorage.setItem('anthropic_api_key',this.value)">
       <label class="file-label">↑ JSON読込<input type="file" accept=".json" id="fileInput" style="display:none" onchange="loadJSON(event)"></label>
       <button class="btn" onclick="exportJSON()">↓ エクスポート</button>
     </div>
@@ -398,8 +399,10 @@ async function startGenerate() {
   document.getElementById('previewArea').innerHTML='';pending=null;
   stEl.innerHTML=`<div class="gen-msg"><div class="spinner"></div>Claude がストーリーラインを生成中 — <span style="color:var(--gold);font-family:var(--mono)">${esc(tk)}</span></div>`;
   try {
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system:SYSPROMPTS[type],
+    const apiKey=document.getElementById('apiKeyInput').value.trim();
+    if(!apiKey){showGenError('APIキーを入力してください（右上の入力欄）。');return;}
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-5',max_tokens:1000,system:SYSPROMPTS[type],
         messages:[{role:'user',content:`銘柄/ファンド識別子: ${tk}\nストーリーラインをJSON形式で作成してください。`}]})});
     const d=await res.json();
     if(d.error) throw new Error(d.error.message);
@@ -482,6 +485,8 @@ function exportJSON(){
 }
 
 render();
+const savedKey = localStorage.getItem('anthropic_api_key');
+if(savedKey) document.getElementById('apiKeyInput').value = savedKey;
 </script>
 </body>
 </html>
