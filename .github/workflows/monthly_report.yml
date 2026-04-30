@@ -66,6 +66,8 @@ jobs:
           DRIVE_FOLDER_DATA: ${{ secrets.DRIVE_FOLDER_DATA }}
           DRIVE_FOLDER_SCREENSHOTS: ${{ secrets.DRIVE_FOLDER_SCREENSHOTS }}
           DRIVE_FOLDER_REPORTS: ${{ secrets.DRIVE_FOLDER_REPORTS }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: python main.py
 

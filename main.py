@@ -69,6 +69,13 @@ from news_fetcher import fetch_stock_news
 from simulator import run_simulation, generate_charts
 from report_generator import generate_report
 from mailer import send_report_email, send_alert_email
+from supabase_handler import (
+    upload_portfolio_snapshot,
+    upload_report as upload_report_to_supabase,
+    sync_stock_stories,
+    upload_monthly_expense,
+)
+from expense_scraper import scrape_monthly_expense
 
 
 # ============================================================
@@ -144,123 +151,160 @@ def main():
     # Step 1: 日付判定（FORCE_RUN=true なら月末チェックをスキップ）
     # ----------------------------------------------------------
     force_run = os.environ.get("FORCE_RUN", "false").lower() == "true"
+    # RUN_TYPE: full / scrape_portfolio / scrape_expenses / report_only
+    run_type = os.environ.get("RUN_TYPE", "full").lower()
+    do_scrape_portfolio = run_type in ("full", "scrape_portfolio")
+    do_scrape_expenses  = run_type in ("full", "scrape_expenses")
+    do_report           = run_type in ("full", "report_only")
+
     if not force_run and not is_last_day_of_month(today):
         print(f"[INFO] {today} は月末ではないため正常終了します。")
         sys.exit(0)
 
-    print(f"[INFO] 月次ポートフォリオ分析を開始します ({today})")
+    print(f"[INFO] 月次ポートフォリオ分析を開始します ({today}) [RUN_TYPE={run_type}]")
 
     # Google Drive ハンドラ初期化
     drive = DriveHandler()
 
+    portfolio_data = None
+    chart_paths = []
+    screenshot_path = None
+
     try:
         # ----------------------------------------------------------
-        # Step 2: データ収集 (Playwright)
+        # Step 2: ポートフォリオ取得 (Playwright)
         # ----------------------------------------------------------
-        print("[STEP 2] マネーフォワードからデータを収集中...")
-        screenshot_path = SCREENSHOTS_DIR / f"{tag}_portfolio.png"
-        portfolio_data = scrape_portfolio(
-            screenshot_path=str(screenshot_path),
-            vt_exclude_shares=VT_EXCLUDE_SHARES,
-        )
-        print(f"  -> スクリーンショット保存: {screenshot_path}")
-        print(f"  -> 銘柄数: {len(portfolio_data['holdings'])}")
-        try:
-            drive.upload_file(str(screenshot_path))
-            print(f"  -> スクリーンショット Drive アップロード完了")
-        except Exception as drive_err:
-            print(f"  -> [WARN] スクリーンショット Drive アップロードスキップ: {drive_err}")
-
-        # ----------------------------------------------------------
-        # Step 3: history.csv に追記 → Google Drive アップロード
-        # ----------------------------------------------------------
-        print("[STEP 3] history.csv を更新中...")
-        drive.append_history(
-            csv_path=str(HISTORY_CSV),
-            date_str=str(today),
-            portfolio_data=portfolio_data,
-        )
-        try:
-            drive.upload_file(str(HISTORY_CSV))
-            print("  -> history.csv 更新・アップロード完了")
-        except Exception as drive_err:
-            print(f"  -> [WARN] Drive アップロードスキップ: {drive_err}")
-            print("  -> history.csv はローカルに保存済み（ワークフロー続行）")
-
-        # ----------------------------------------------------------
-        # Step 4: 外部コンテキスト取得
-        # ----------------------------------------------------------
-        print("[STEP 4] 運用方針・ニュースを取得中...")
-        financial_policy = FINANCIAL_POLICY.read_text(encoding="utf-8")
-        stock_stories_text = STOCK_STORIES.read_text(encoding="utf-8")
-        import json as _json
-        stock_stories_dict = _json.loads(stock_stories_text)
-
-        # ニュース取得対象: stock_stories.json に登録されたすべての識別子
-        news_tickers = list(stock_stories_dict.keys())
-        news = fetch_stock_news(news_tickers, stories=stock_stories_dict)
-        print(f"  -> ニュース記事数: {sum(len(v) for v in news.values())}")
-
-        # ----------------------------------------------------------
-        # Step 5: シミュレーション & グラフ生成
-        # ----------------------------------------------------------
-        print("[STEP 5] 資産寿命シミュレーション実行中...")
-        history_df = drive.load_history(str(HISTORY_CSV))
-        sim_result = run_simulation(
-            portfolio_data=portfolio_data,
-            history_df=history_df,
-            params=SIMULATION_PARAMS,
-        )
-
-        chart_paths = generate_charts(
-            sim_result=sim_result,
-            history_df=history_df,
-            output_dir=str(SCREENSHOTS_DIR),
-            tag=tag,
-        )
-        print(f"  -> グラフ生成完了: {chart_paths}")
-        for cp in chart_paths:
+        if do_scrape_portfolio:
+            print("[STEP 2] マネーフォワードからポートフォリオを収集中...")
+            screenshot_path = SCREENSHOTS_DIR / f"{tag}_portfolio.png"
+            portfolio_data = scrape_portfolio(
+                screenshot_path=str(screenshot_path),
+                vt_exclude_shares=VT_EXCLUDE_SHARES,
+            )
+            print(f"  -> 銘柄数: {len(portfolio_data['holdings'])}")
             try:
-                drive.upload_file(cp)
-                print(f"  -> シミュレーショングラフ Drive アップロード完了: {Path(cp).name}")
+                drive.upload_file(str(screenshot_path))
             except Exception as drive_err:
-                print(f"  -> [WARN] グラフ Drive アップロードスキップ: {drive_err}")
+                print(f"  -> [WARN] Drive アップロードスキップ: {drive_err}")
+
+            # Step 3: history.csv 更新
+            print("[STEP 3] history.csv を更新中...")
+            drive.append_history(
+                csv_path=str(HISTORY_CSV),
+                date_str=str(today),
+                portfolio_data=portfolio_data,
+            )
+            try:
+                drive.upload_file(str(HISTORY_CSV))
+                print("  -> history.csv アップロード完了")
+            except Exception as drive_err:
+                print(f"  -> [WARN] Drive アップロードスキップ: {drive_err}")
+
+            upload_portfolio_snapshot(str(today), portfolio_data)
+        else:
+            print("[STEP 2/3] スキップ（RUN_TYPE={run_type}）")
 
         # ----------------------------------------------------------
-        # Step 6: レポート生成 (Claude API)
+        # Step 3.5: 支出データ取得（前月分）
         # ----------------------------------------------------------
-        print("[STEP 6] Claude APIでレポート生成中...")
-        template = REPORT_TEMPLATE.read_text(encoding="utf-8")
-        report_md = generate_report(
-            template=template,
-            portfolio_data=portfolio_data,
-            sim_result=sim_result,
-            financial_policy=financial_policy,
-            stock_stories=stock_stories_text,
-            news=news,
-        )
+        if do_scrape_expenses:
+            try:
+                print("[STEP 3.5] 家計簿から前月の支出を取得中...")
+                expense_screenshot = SCREENSHOTS_DIR / f"{tag}_expenses.png"
+                expense_data = scrape_monthly_expense(
+                    screenshot_path=str(expense_screenshot),
+                )
+                upload_monthly_expense(
+                    year_month=expense_data["year_month"],
+                    total_amount=expense_data["total_amount"],
+                    categories=expense_data["categories"],
+                    raw_data={"text_excerpt": expense_data.get("raw_text", "")[:1000]},
+                )
+                try:
+                    drive.upload_file(str(expense_screenshot))
+                except Exception as drive_err:
+                    print(f"  -> [WARN] 支出スクリーンショット Drive アップロードスキップ: {drive_err}")
+            except Exception as exp_err:
+                print(f"  -> [WARN] 支出データ取得スキップ: {exp_err}")
+        else:
+            print("[STEP 3.5] スキップ")
 
-        report_path = REPORTS_DIR / f"{tag}_report.md"
-        report_path.write_text(report_md, encoding="utf-8")
-        print(f"  -> レポート保存: {report_path}")
-        try:
-            drive.upload_file(str(report_path))
-            print(f"  -> レポート Drive アップロード完了: {report_path.name}")
-        except Exception as drive_err:
-            print(f"  -> [WARN] レポート Drive アップロードスキップ: {drive_err}")
+        # ----------------------------------------------------------
+        # Step 4〜7: レポート生成・メール配信
+        # ----------------------------------------------------------
+        if do_report:
+            # report_only の場合はhistory.csvから最新portfolioを復元
+            if portfolio_data is None:
+                print("[STEP 4] history.csv から最新データを読込中...")
+                history_df = drive.load_history(str(HISTORY_CSV))
+                if history_df.empty:
+                    raise RuntimeError("portfolio_data も history.csv も利用不可です。先にポートフォリオ取得を実行してください。")
+                latest = history_df.iloc[-1]
+                portfolio_data = {
+                    "total": float(latest.get("total", 0)),
+                    "holdings": [],
+                    "date": str(latest.get("date", today)),
+                }
 
-        # ----------------------------------------------------------
-        # Step 7: メール配信
-        # ----------------------------------------------------------
-        print("[STEP 7] レポートをメール送信中...")
-        attachments = [str(screenshot_path)] + chart_paths
-        send_report_email(
-            to=RECIPIENT_EMAIL,
-            subject=f"月次ポートフォリオレポート ({today.strftime('%Y年%m月')})",
-            body_md=report_md,
-            attachments=attachments,
-        )
-        print("[完了] 月次レポートの配信が完了しました。")
+            print("[STEP 4] 運用方針・ニュースを取得中...")
+            financial_policy = FINANCIAL_POLICY.read_text(encoding="utf-8")
+            stock_stories_text = STOCK_STORIES.read_text(encoding="utf-8")
+            import json as _json
+            stock_stories_dict = _json.loads(stock_stories_text)
+            sync_stock_stories(stock_stories_dict)
+
+            news_tickers = list(stock_stories_dict.keys())
+            news = fetch_stock_news(news_tickers, stories=stock_stories_dict)
+            print(f"  -> ニュース記事数: {sum(len(v) for v in news.values())}")
+
+            print("[STEP 5] 資産寿命シミュレーション実行中...")
+            history_df = drive.load_history(str(HISTORY_CSV))
+            sim_result = run_simulation(
+                portfolio_data=portfolio_data,
+                history_df=history_df,
+                params=SIMULATION_PARAMS,
+            )
+            chart_paths = generate_charts(
+                sim_result=sim_result,
+                history_df=history_df,
+                output_dir=str(SCREENSHOTS_DIR),
+                tag=tag,
+            )
+            for cp in chart_paths:
+                try:
+                    drive.upload_file(cp)
+                except Exception as drive_err:
+                    print(f"  -> [WARN] グラフ Drive アップロードスキップ: {drive_err}")
+
+            print("[STEP 6] Claude APIでレポート生成中...")
+            template = REPORT_TEMPLATE.read_text(encoding="utf-8")
+            report_md = generate_report(
+                template=template,
+                portfolio_data=portfolio_data,
+                sim_result=sim_result,
+                financial_policy=financial_policy,
+                stock_stories=stock_stories_text,
+                news=news,
+            )
+            report_path = REPORTS_DIR / f"{tag}_report.md"
+            report_path.write_text(report_md, encoding="utf-8")
+            try:
+                drive.upload_file(str(report_path))
+            except Exception as drive_err:
+                print(f"  -> [WARN] レポート Drive アップロードスキップ: {drive_err}")
+            upload_report_to_supabase(str(today), report_md, sim_params=SIMULATION_PARAMS)
+
+            print("[STEP 7] レポートをメール送信中...")
+            attachments = ([str(screenshot_path)] if screenshot_path else []) + chart_paths
+            send_report_email(
+                to=RECIPIENT_EMAIL,
+                subject=f"月次ポートフォリオレポート ({today.strftime('%Y年%m月')})",
+                body_md=report_md,
+                attachments=attachments,
+            )
+            print("[完了] レポートの配信が完了しました。")
+        else:
+            print(f"[完了] {run_type} 完了（レポート生成はスキップ）")
 
     except Exception as e:
         # ----------------------------------------------------------
