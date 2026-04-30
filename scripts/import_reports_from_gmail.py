@@ -21,6 +21,7 @@ text/plain パート（= Markdown 本文）を取り出して fo_reports に投�
 
 import os, sys, re, base64, argparse, email
 from datetime import date
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -64,6 +65,14 @@ def _extract_plain(payload: dict) -> str | None:
         if result:
             return result
     return None
+
+
+def _parse_date_from_email_header(date_header: str) -> date | None:
+    """メールの Date: ヘッダーから実際の送信日を取得する"""
+    try:
+        return parsedate_to_datetime(date_header).date()
+    except Exception:
+        return None
 
 
 def _parse_date_from_subject(subject: str) -> date | None:
@@ -127,8 +136,8 @@ def run(dry_run: bool):
             failed += 1
             continue
 
-        # 日付を推定
-        report_date = _parse_date_from_subject(subject) or _parse_date_from_markdown(plain)
+        # 日付を推定（実送信日 → 件名 → 本文の順）
+        report_date = _parse_date_from_email_header(date_header) or _parse_date_from_subject(subject) or _parse_date_from_markdown(plain)
         if report_date is None:
             print(f"  スキップ（日付不明）: {subject}")
             failed += 1
