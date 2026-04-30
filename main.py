@@ -163,8 +163,8 @@ def main():
 
     print(f"[INFO] 月次ポートフォリオ分析を開始します ({today}) [RUN_TYPE={run_type}]")
 
-    # Google Drive ハンドラ初期化
-    drive = DriveHandler()
+    # Google Drive はポートフォリオ取得・レポート生成時のみ初期化（認証エラーを局所化）
+    drive = DriveHandler() if (do_scrape_portfolio or do_report) else None
 
     portfolio_data = None
     chart_paths = []
@@ -220,10 +220,11 @@ def main():
                     categories=expense_data["categories"],
                     raw_data={"text_excerpt": expense_data.get("raw_text", "")[:1000]},
                 )
-                try:
-                    drive.upload_file(str(expense_screenshot))
-                except Exception as drive_err:
-                    print(f"  -> [WARN] 支出スクリーンショット Drive アップロードスキップ: {drive_err}")
+                if drive:
+                    try:
+                        drive.upload_file(str(expense_screenshot))
+                    except Exception as drive_err:
+                        print(f"  -> [WARN] 支出スクリーンショット Drive アップロードスキップ: {drive_err}")
             except Exception as exp_err:
                 print(f"  -> [WARN] 支出データ取得スキップ: {exp_err}")
         else:
