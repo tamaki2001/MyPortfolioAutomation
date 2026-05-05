@@ -201,19 +201,48 @@ def scrape_portfolio(
 # Cookie 管理
 # ================================================================
 
+def _load_cookies_from_supabase() -> list[dict] | None:
+    """Supabase の fo_settings テーブルから MF クッキーを取得する（iOS アプリ連携用）。"""
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return None
+    try:
+        import urllib.request
+        url = f"{supabase_url}/rest/v1/fo_settings?key=eq.mf_cookies&select=value"
+        req = urllib.request.Request(url, headers={
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read())
+        if rows:
+            print("  -> Cookie を Supabase (fo_settings) から読み込み")
+            return json.loads(rows[0]["value"])
+    except Exception as e:
+        print(f"  -> Supabase からの Cookie 読み込みスキップ: {e}")
+    return None
+
+
 def _load_cookies() -> list[dict]:
     """
     Cookie を読み込む。
 
     優先順:
-      1. 環境変数 MF_COOKIES（GitHub Actions 用）
-      2. ローカルの cookies.json ファイル
+      1. 環境変数 MF_COOKIES（GitHub Secrets 直接設定）
+      2. Supabase fo_settings（iOS アプリ経由）
+      3. ローカルの cookies.json ファイル
     """
-    # 環境変数から（GitHub Actions）
+    # 環境変数から（GitHub Secrets 直接設定）
     cookies_env = os.environ.get("MF_COOKIES", "")
     if cookies_env:
         print("  -> Cookie を環境変数 (MF_COOKIES) から読み込み")
         return json.loads(cookies_env)
+
+    # Supabase から（iOS アプリ経由）
+    supabase_cookies = _load_cookies_from_supabase()
+    if supabase_cookies:
+        return supabase_cookies
 
     # ローカルファイルから
     if COOKIES_FILE.exists():
@@ -223,14 +252,9 @@ def _load_cookies() -> list[dict]:
     raise FileNotFoundError(
         "Cookie が見つかりません。\n"
         "以下のいずれかを設定してください:\n"
-        "  1. 環境変数 MF_COOKIES に Cookie JSON を設定\n"
-        "  2. cookies.json ファイルをプロジェクトルートに配置\n"
-        "\n"
-        "Cookie の取得方法:\n"
-        "  1. Chrome に Cookie Editor 拡張機能をインストール\n"
-        "  2. MoneyForward にログインした状態で bs/portfolio を開く\n"
-        "  3. Cookie Editor の Export ボタンでコピー\n"
-        "  4. cookies.json に貼り付けて保存"
+        "  1. iOS アプリの設定画面から MoneyForward にログイン\n"
+        "  2. 環境変数 MF_COOKIES に Cookie JSON を設定\n"
+        "  3. cookies.json ファイルをプロジェクトルートに配置"
     )
 
 

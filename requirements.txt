@@ -9,3 +9,4 @@ anthropic>=0.39.0
 requests>=2.31.0
 feedparser>=6.0.0
 markdown>=3.5.0
+supabase>=2.0.0
