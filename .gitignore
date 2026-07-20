@@ -31,3 +31,6 @@ cookies/
 # Claude Code ローカル設定
 .claude/
 run_now.bat
+
+# macOS
+.DS_Store

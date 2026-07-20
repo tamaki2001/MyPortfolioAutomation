@@ -1,5 +1,7 @@
 # MyPortfolioAutomation
 
+> **このプロジェクトは休眠中** — 今後の機能開発予定はなく、部品取り・名称整合性確保のために保持。バグ修正対応は通常通り。詳細はメモリ `project_dormant_projects` 参照。
+
 FIRE生活者（浅野智明）のための月次ポートフォリオ分析・レポート自動生成システム。
 
 ## システム概要
@@ -23,7 +25,7 @@ GitHub Actionsで毎月末に自動実行される。
 main.py               # エントリーポイント・オーケストレーション
 scraper.py             # MoneyForward ME スクレイパー（Playwright）
 drive_handler.py       # Google Drive API連携（OAuth2）
-report_generator.py    # Claude APIレポート生成（claude-sonnet-4-5）
+report_generator.py    # Claude APIレポート生成（claude-sonnet-4-6）
 simulator.py           # 資産寿命シミュレーション・グラフ描画
 mailer.py              # Gmail SMTP配信
 news_fetcher.py        # Yahoo Finance RSSニュース取得
@@ -54,11 +56,9 @@ setup/
 
 ## 技術スタック
 
-- Python 3.11 / Playwright / pandas / matplotlib / anthropic SDK
-- Claude Sonnet 4（レポート生成）、Claude API（story_manager.htmlからの仮説生成）
-- Google Drive API（OAuth2 refresh token）
-- Gmail SMTP（アプリパスワード）
-- GitHub Actions（月次自動実行）
+（標準スタック。詳細は `~/.claude/stack-catalog.md`）
+- Python 3.11 + Playwright + pandas + matplotlib + anthropic SDK（`claude-sonnet-4-6`）
+- Google Drive API / Gmail SMTP / GitHub Actions（月次自動実行）
 
 ## 開発時の注意
 
@@ -67,14 +67,4 @@ setup/
 - story_manager.htmlは単体で動作するHTMLファイル。APIキーはブラウザから直接Anthropic APIを呼ぶ構成
 - シミュレーションのパラメータ（年金額、支出額、リターン率等）はsimulator.pyにハードコードされている
 
-<!-- COSTVIEWER:START -->
-## コスト管理
-
-新しい有料サービスやレート制限のあるAPIを導入する際は、
-以下の情報をCost Viewerダッシュボードに登録してください:
-- サービス名、種別(従量課金/固定費/レート制限)
-- 課金通貨と料金体系
-- 使用するAPIキーの環境変数名
-
-現在追跡中のサービス: Claude (claude.ai + CLI), Anthropic Claude API, Google AI (Gemini API), Gemini (Web版), Oura Ring, Vercel, Cloudflare Workers/Pages, GitHub Actions, Supabase, Google Calendar API, GitHub API, Google Drive API, Gmail SMTP, Pushover, Anthropic Claude API (myportfolio)
-<!-- COSTVIEWER:END -->
+<!-- コスト追跡対象は `~/.claude/stack-catalog.md` および costviewer/CLAUDE.md 参照 -->
